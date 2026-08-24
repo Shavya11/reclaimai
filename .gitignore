@@ -1,0 +1,34 @@
+# secrets — never commit (CLAUDE.md rule 10)
+.env
+*.key
+key_details*.txt
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.hypothesis/
+
+# data
+*.db
+*.sqlite3
+data/*.db
+
+# node / next
+node_modules/
+.next/
+out/
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# extra secret files
+user.env
+*.env
+!.env.example
