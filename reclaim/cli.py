@@ -87,6 +87,41 @@ def cmd_verify(args) -> int:
     return 0 if failed == 0 else 1
 
 
+def cmd_harvest(args) -> int:
+    from .harvest import FIXTURE, collect, create
+
+    if args.collect:
+        payload = collect()
+        if args.json:
+            print(json.dumps(payload, indent=2))
+            return 0
+        print(f"{payload['failed_payments']} failed payments of "
+              f"{payload['total_payments']} total")
+        print()
+        for reason, d in payload["codes"].items():
+            print(f"  {GREEN}{reason}{OFF}  code={d['code']} "
+                  f"source={d['source']} step={d['step']}")
+            print(f"        {DIM}{d['description']}{OFF}")
+        print()
+        print(f"written to {FIXTURE}")
+        return 0 if payload["codes"] else 1
+
+    links = create()
+    if args.json:
+        print(json.dumps(links, indent=2))
+        return 0
+    print()
+    print(f"{BOLD}Pay each link in a browser, then run: "
+          f"reclaim harvest --collect{OFF}")
+    print()
+    for link in links:
+        print(f"  {BOLD}{link['scenario']}{OFF}")
+        print(f"     {link['url']}")
+        print(f"     {DIM}{link['how']}{OFF}")
+        print()
+    return 0
+
+
 def cmd_config(args) -> int:
     payload = {
         "dry_run": settings.dry_run,
@@ -115,11 +150,16 @@ def main(argv: list[str] | None = None) -> int:
         ("seed", cmd_seed, "generate the synthetic at-risk batch"),
         ("detect", cmd_detect, "run all detectors over the at-risk store"),
         ("verify", cmd_verify, "structural self-audit of the build"),
+        ("harvest", cmd_harvest, "harvest real Razorpay error codes into fixtures"),
         ("config", cmd_config, "show effective settings"),
     ]:
         sp = subs.add_parser(name, help=helptext)
         sp.add_argument("--json", action="store_true", help="machine-readable output")
         sp.set_defaults(func=fn)
+
+    subs.choices["harvest"].add_argument(
+        "--collect", action="store_true",
+        help="fetch failed payments and write the fixture (default: mint links)")
 
     seed_p = subs.choices["seed"]
     seed_p.add_argument("--seed", type=int, default=settings.seed)
