@@ -20,6 +20,7 @@ _BASE_DELAY = 0.5
 
 # Razorpay returns these when the request itself was fine and the world was not.
 _RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+_RETRYABLE_MESSAGES = ("too many requests", "rate limit", "timeout", "gateway")
 
 
 class RazorpayError(RuntimeError):
@@ -101,4 +102,8 @@ class RazorpayClient:
         code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
         if isinstance(code, int):
             return code in _RETRYABLE_STATUS
+        # Razorpay surfaces throttling as a plain BadRequestError with no status
+        # code, so the message is the only signal available.
+        if any(s in str(exc).lower() for s in _RETRYABLE_MESSAGES):
+            return True
         return isinstance(exc, (TimeoutError, ConnectionError))

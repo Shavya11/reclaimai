@@ -98,13 +98,22 @@ def cmd_harvest(args) -> int:
         print(f"{payload['failed_payments']} failed payments of "
               f"{payload['total_payments']} total")
         print()
+        if not payload["codes"]:
+            print(f"  {YELLOW}nothing harvested — no payment has been attempted "
+                  f"yet.{OFF}")
+            print(f"  {DIM}fixture left untouched. link status:{OFF}")
+            print()
+            for l in payload.get("links", []):
+                flag = f"{GREEN}attempted{OFF}" if l["attempted"] else f"{YELLOW}untouched{OFF}"
+                print(f"     {l['scenario']:<20} {l['status']:<10} {flag}  {l['url']}")
+            return 1
         for reason, d in payload["codes"].items():
             print(f"  {GREEN}{reason}{OFF}  code={d['code']} "
                   f"source={d['source']} step={d['step']}")
             print(f"        {DIM}{d['description']}{OFF}")
         print()
         print(f"written to {FIXTURE}")
-        return 0 if payload["codes"] else 1
+        return 0
 
     links = create()
     if args.json:

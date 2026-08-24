@@ -52,10 +52,32 @@ def create() -> list[dict]:
     return out
 
 
+def _items(response: dict, *keys: str) -> list:
+    """Razorpay collection endpoints are not consistent about their list key:
+    payments use `items`, payment links use `payment_links`."""
+    for k in (*keys, "items"):
+        if isinstance(response.get(k), list):
+            return response[k]
+    return []
+
+
+def link_status() -> list[dict]:
+    """Which harvest links have actually been paid. Answers the common failure
+    mode — an empty fixture because nobody clicked anything yet."""
+    client = RazorpayClient(dry_run=False)._client
+    links = _items(client.payment_link.all(), "payment_links")
+    return [
+        {"scenario": l.get("notes", {}).get("harvest_scenario", "?"),
+         "status": l.get("status"), "amount_paid": l.get("amount_paid"),
+         "attempted": bool(l.get("payments")), "url": l.get("short_url")}
+        for l in links
+    ]
+
+
 def collect() -> dict:
     """Fetch every payment on the account and keep the failed ones' error fields."""
     client = RazorpayClient(dry_run=False)._client
-    payments = client.payment.all({"count": 100}).get("items", [])
+    payments = _items(client.payment.all({"count": 100}), "payments")
     failed = [p for p in payments if p.get("status") == "failed"]
 
     harvested = {}
@@ -77,6 +99,12 @@ def collect() -> dict:
         "failed_payments": len(failed),
         "codes": harvested,
     }
-    FIXTURE.parent.mkdir(parents=True, exist_ok=True)
-    FIXTURE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    # An empty fixture would silently overwrite a good one, so only write when
+    # there is something to write.
+    if harvested:
+        FIXTURE.parent.mkdir(parents=True, exist_ok=True)
+        FIXTURE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        payload["written_to"] = str(FIXTURE)
+    else:
+        payload["links"] = link_status()
     return payload
