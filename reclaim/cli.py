@@ -281,6 +281,121 @@ def cmd_plan(args) -> int:
     return 0
 
 
+def cmd_run_batch(args) -> int:
+    from .runner import BatchCrashed, run_batch
+
+    crashed = None
+    try:
+        result = run_batch(
+            seed=args.seed, llm=_diagnoser(args), crash_at=args.crash_at,
+            reseed=not args.resume, dry_run=None if args.live else True,
+        )
+    except BatchCrashed as exc:
+        crashed = str(exc)
+        result = None
+
+    if args.json:
+        print(json.dumps({"crashed": crashed,
+                          "result": result.as_dict() if result else None}, indent=2))
+        return 1 if crashed else 0
+
+    if crashed:
+        print()
+        print(f"  {RED}{crashed}{OFF}")
+        print(f"  {DIM}run `reclaim run-batch --resume` to continue{OFF}")
+        print()
+        return 1
+
+    print()
+    print(f"{BOLD}BATCH COMPLETE{OFF}")
+    print(f"  proposed          {result.proposed:>5}")
+    print(f"  allowed           {GREEN}{result.allowed:>5}{OFF}")
+    print(f"  blocked           {RED}{result.blocked:>5}{OFF}")
+    print(f"  executed          {result.executed:>5}")
+    print(f"  skipped (replay)  {result.skipped_idempotent:>5}")
+    print(f"  failed            {result.failed:>5}")
+    print(f"  escalated         {result.escalated:>5}")
+    print(f"  messages sent     {result.messages_sent:>5}")
+    if result.blocked_by:
+        print()
+        for name, n in result.blocked_by.most_common():
+            print(f"     {name:<20} {n:>4}")
+    print()
+    return 0
+
+
+def cmd_prove_idempotency(args) -> int:
+    """Kills a batch mid-flight, resumes it, and counts the keys. The claim that
+    the agent cannot double-charge is demonstrated, not asserted."""
+    from sqlalchemy import func
+
+    from .db import ExecutedActionRow, SessionLocal
+    from .runner import BatchCrashed, run_batch
+
+    _reset_database()
+    print()
+    print(f"{BOLD}IDEMPOTENCY UNDER CRASH{OFF}")
+    print()
+
+    try:
+        run_batch(seed=args.seed, crash_at=args.crash_at, dry_run=True)
+    except BatchCrashed as exc:
+        print(f"  1. {YELLOW}{exc}{OFF}")
+
+    with SessionLocal() as s:
+        claimed = s.query(ExecutedActionRow).count()
+    print(f"  2. keys claimed before the crash: {BOLD}{claimed}{OFF}")
+
+    resumed = run_batch(seed=args.seed, reseed=False, dry_run=True)
+    print(f"  3. resumed — guardrail #10 blocked "
+          f"{BOLD}{resumed.blocked_by['idempotency']}{OFF} replays before they "
+          f"reached Razorpay")
+
+    with SessionLocal() as s:
+        total = s.query(ExecutedActionRow).count()
+        distinct = s.query(
+            func.count(func.distinct(ExecutedActionRow.idempotency_key))).scalar()
+        dupes = (s.query(ExecutedActionRow.idempotency_key)
+                 .group_by(ExecutedActionRow.idempotency_key)
+                 .having(func.count("*") > 1).count())
+
+    print()
+    print(f"     executed_actions rows   {total:>5}")
+    print(f"     distinct keys           {distinct:>5}")
+    tint = GREEN if dupes == 0 else RED
+    print(f"     {BOLD}duplicate keys{OFF}          {tint}{dupes:>5}{OFF}")
+    print()
+    if dupes == 0:
+        print(f"  {GREEN}No action executed twice. The UNIQUE constraint on "
+              f"idempotency_key makes it impossible.{OFF}")
+    print()
+
+    if args.json:
+        print(json.dumps({"claimed_before_crash": claimed, "rows": total,
+                          "distinct_keys": distinct, "duplicates": dupes}))
+    return 0 if dupes == 0 else 1
+
+
+def _reset_database() -> None:
+    """Drops the file rather than deleting rows — audit_log rejects DELETE by
+    design, so a clean slate means a new database."""
+    from pathlib import Path
+
+    from .db import engine, init_db
+
+    engine.dispose()
+    db = Path(str(settings.database_url).replace("sqlite:///", ""))
+    if db.exists():
+        db.unlink()
+    init_db()
+
+
+def cmd_reset(args) -> int:
+    _reset_database()
+    print("database reset")
+    return 0
+
+
 def cmd_config(args) -> int:
     payload = {
         "dry_run": settings.dry_run,
@@ -311,6 +426,9 @@ def main(argv: list[str] | None = None) -> int:
         ("verify", cmd_verify, "structural self-audit of the build"),
         ("diagnose", cmd_diagnose, "diagnose the batch and score it against ground truth"),
         ("plan", cmd_plan, "propose an action for every record (nothing executed)"),
+        ("run-batch", cmd_run_batch, "run the full pipeline end to end"),
+        ("prove-idempotency", cmd_prove_idempotency, "crash a batch, resume it, count the keys"),
+        ("reset", cmd_reset, "drop the database and start clean"),
         ("harvest", cmd_harvest, "harvest real Razorpay error codes into fixtures"),
         ("config", cmd_config, "show effective settings"),
     ]:
@@ -322,7 +440,17 @@ def main(argv: list[str] | None = None) -> int:
         "--collect", action="store_true",
         help="fetch failed payments and write the fixture (default: mint links)")
 
-    for name in ("diagnose", "plan"):
+    rb = subs.choices["run-batch"]
+    rb.add_argument("--crash-at", type=int, default=None,
+                    help="simulate a crash after N actions")
+    rb.add_argument("--resume", action="store_true",
+                    help="continue without regenerating the batch")
+    rb.add_argument("--live", action="store_true",
+                    help="make real Razorpay test-mode calls")
+    pi = subs.choices["prove-idempotency"]
+    pi.add_argument("--crash-at", type=int, default=30)
+
+    for name in ("diagnose", "plan", "run-batch", "prove-idempotency"):
         subs.choices[name].add_argument("--seed", type=int, default=settings.seed)
         subs.choices[name].add_argument("--no-llm", action="store_true",
                                         help="skip layer 2 and prove the batch still completes")

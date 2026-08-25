@@ -79,8 +79,14 @@ def run(
     autopilot = (settings.autopilot_enabled if autopilot_enabled is None
                  else autopilot_enabled)
 
-    contacts: Counter = Counter()          # per customer, across all records
-    last_contact: dict[str, datetime] = {}
+    # Seeded from what was actually executed, so the seven-day window survives a
+    # process restart. An in-memory-only tally makes guardrail #7 true per run
+    # rather than per customer.
+    from ..repository import contact_history
+
+    prior_counts, prior_last = contact_history(frm)
+    contacts: Counter = Counter(prior_counts)
+    last_contact: dict[str, datetime] = dict(prior_last)
     actions_today = 0
     report = GateReport()
 

@@ -6,6 +6,7 @@ from sqlalchemy import select
 from .db import AtRiskRecordRow, CustomerRow, SessionLocal
 from .enums import LeakType, RecordState
 from .models import AtRiskRecord
+from .timeutil import to_ist
 
 
 def _to_model(row: AtRiskRecordRow) -> AtRiskRecord:
@@ -60,3 +61,42 @@ def get_customer(customer_id: str) -> CustomerRow | None:
 def count_records() -> int:
     with SessionLocal() as s:
         return s.query(AtRiskRecordRow).count()
+
+
+def contact_history(before, window_days: int = 7):
+    """Contacts per customer inside the trailing window, from what was actually
+    executed — not from a per-batch tally.
+
+    Guardrail #7 claims at most two contacts per customer per seven days. A
+    counter that resets when the process restarts makes that claim true only
+    within one run, which is the same as not being true.
+    """
+    from datetime import timedelta
+
+    from .db import InterventionRow
+
+    since = before - timedelta(days=window_days)
+    counts: dict[str, int] = {}
+    last: dict[str, object] = {}
+
+    with SessionLocal() as s:
+        rows = (
+            s.query(InterventionRow.executed_at, AtRiskRecordRow.counterparty_id)
+            .join(AtRiskRecordRow, AtRiskRecordRow.id == InterventionRow.record_id)
+            .filter(InterventionRow.channel.isnot(None))
+            .filter(InterventionRow.outcome == "EXECUTED")
+            .filter(InterventionRow.executed_at.isnot(None))
+            .all()
+        )
+
+    for executed_at, customer_id in rows:
+        if executed_at is None:
+            continue
+        executed_at = to_ist(executed_at)
+        if executed_at < since:
+            continue
+        counts[customer_id] = counts.get(customer_id, 0) + 1
+        if customer_id not in last or executed_at > last[customer_id]:
+            last[customer_id] = executed_at
+
+    return counts, last

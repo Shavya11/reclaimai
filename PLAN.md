@@ -110,12 +110,12 @@ actions for all 120 records with per-record `policy_ref` and any guardrail block
 **Done when:** a full batch runs end-to-end against Razorpay test mode and the
 scoreboard prints real recovered rupees.
 
-- [ ] **3.1 Executor** (2.5h)
+- [x] **3.1 Executor** (2.5h)
   - Payment Links (`POST /payment_links`), with `prefill_method` from policy
   - Retry / fresh order; subscription retry
   - Idempotency key on every write; record into `executed_actions`
   - Channel abstraction `send(channel, recipient, message)` — guardrails sit ABOVE it
-- [ ] **3.2 Message generation** (1h)
+- [x] **3.2 Message generation** (1h)
   - Per-cause, per-tone copy. LLM may write the text; it may NOT choose the action
   - Include the payment link; keep it short and human
 - [ ] **3.3 Webhook receiver** (2h)
@@ -127,7 +127,7 @@ scoreboard prints real recovered rupees.
 - [ ] **3.4 Outcome attribution** (1.5h)
   - link paid → find intervention → mark record RECOVERED → attribute ₹
   - This chain is the proof that the recovery was ours
-- [ ] **3.5 Batch runner / orchestrator** (2h)
+- [x] **3.5 Batch runner / orchestrator** (2h)
   - `detect → diagnose → decide → guardrail → execute → persist → audit`
   - Handles deferred actions on the next tick
   - `/tick` endpoint + CLI so the demo can advance time on command
