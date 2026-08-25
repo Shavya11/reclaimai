@@ -58,11 +58,20 @@ class Customer:
     last_successful_at: object | None
 
 
+# A failure count alone cannot say "outage" — ten failures out of twelve attempts
+# and ten out of a thousand are different worlds. The simulation therefore carries
+# the attempt volume the merchant saw, so the cohort signal divides by something
+# real instead of an invented denominator.
+BASELINE_FAILURE_RATE = 0.04
+OUTAGE_FAILURE_RATE = 0.71
+
+
 @dataclass
 class Batch:
     records: list[AtRiskRecord]
     customers: list[Customer]
     truth: dict[str, RootCause]  # record_id -> the cause we planted
+    traffic: dict[str, int]      # "ISSUER|YYYY-MM-DDTHH" -> total attempts
 
     @property
     def total_at_risk(self) -> int:
@@ -185,4 +194,30 @@ def generate(seed: int = 42, n: int = 120) -> Batch:
         )
         truth[rid] = cause
 
-    return Batch(records=records, customers=customers, truth=truth)
+    return Batch(records=records, customers=customers, truth=truth,
+                 traffic=_traffic(records, truth))
+
+
+def bucket_key(issuer: str, dt) -> str:
+    """(issuer, hour) is the grain the cohort signal groups on."""
+    return f"{issuer}|{dt.astimezone(IST).strftime('%Y-%m-%dT%H')}"
+
+
+def _traffic(records, truth) -> dict[str, int]:
+    """Back out plausible attempt volumes from the failures we planted, so that
+    failures/attempts lands near the baseline normally and near the outage rate
+    inside the outage window."""
+    failures: dict[str, int] = {}
+    outage_buckets: set[str] = set()
+    for r in records:
+        key = bucket_key(r.raw_signals["issuer_bank"], r.detected_at)
+        failures[key] = failures.get(key, 0) + 1
+        if (truth[r.id] is RootCause.BANK_DOWNTIME
+                and r.raw_signals["issuer_bank"] == OUTAGE_ISSUER):
+            outage_buckets.add(key)
+
+    traffic: dict[str, int] = {}
+    for key, n in failures.items():
+        rate = OUTAGE_FAILURE_RATE if key in outage_buckets else BASELINE_FAILURE_RATE
+        traffic[key] = max(n, round(n / rate))
+    return traffic

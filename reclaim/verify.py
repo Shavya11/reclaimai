@@ -82,6 +82,33 @@ def _deterministic_map_is_valid() -> Check:
                  f"{len(DETERMINISTIC_MAP)} error codes mapped")
 
 
+def _deterministic_map_matches_harvested_codes() -> Check:
+    """A guessed error string produces a lookup that silently never matches, so
+    every record falls to the LLM and the "60% resolved for free" claim quietly
+    becomes 0% with no error to notice."""
+    import json
+
+    name = "deterministic map matches harvested Razorpay codes"
+    fixture = ROOT / "fixtures" / "razorpay_error_codes.json"
+    if not fixture.exists():
+        return Check(name, PENDING,
+                     "no harvested fixture yet — run `cli harvest` (PLAN 1.2)")
+
+    from .brain.diagnosis.deterministic import AMBIGUOUS_REASONS, DETERMINISTIC_MAP
+
+    codes = json.loads(fixture.read_text(encoding="utf-8")).get("codes", {})
+    if not codes:
+        return Check(name, PENDING, "fixture present but empty")
+
+    known = set(DETERMINISTIC_MAP) | set(AMBIGUOUS_REASONS)
+    unmapped = [r for r in codes if r.lower() not in known]
+    if unmapped:
+        return Check(name, FAIL,
+                     f"harvested but unmapped: {', '.join(sorted(unmapped))}")
+    return Check(name, PASS,
+                 f"all {len(codes)} harvested reasons are mapped or explicitly ambiguous")
+
+
 def _detectors_cover_v1_leak_types() -> Check:
     from .detectors import REGISTRY
 
@@ -165,6 +192,7 @@ CHECKS = [
     _detectors_cover_v1_leak_types,
     _outcome_simulator_covers_every_root_cause,
     _deterministic_map_is_valid,
+    _deterministic_map_matches_harvested_codes,
     _policies_cover_every_root_cause,
     _thirteen_guardrails,
 ]

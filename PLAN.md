@@ -73,10 +73,10 @@ record/schema layer.
 **Done when:** the full guardrail test suite is green and a record can go
 error → RootCause → ProposedAction → ALLOW/BLOCK without touching Razorpay.
 
-- [ ] **2.1 Deterministic diagnosis map** (1h)
+- [x] **2.1 Deterministic diagnosis map** (1h)
   - `brain/diagnosis/deterministic.py` using the REAL codes seen on Day 1
   - Target: resolves ~60% of records at confidence 1.0
-- [ ] **2.2 Cohort signal** (1h)
+- [x] **2.2 Cohort signal** (1h)
   - Group batch by (issuer, hour bucket), compute failure rate vs baseline
   - This is what turns "declined" into BANK_DOWNTIME → silent retry
 - [ ] **2.3 LLM diagnosis** (2.5h)

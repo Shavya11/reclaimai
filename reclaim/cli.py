@@ -131,6 +131,53 @@ def cmd_harvest(args) -> int:
     return 0
 
 
+def cmd_diagnose(args) -> int:
+    from .brain.diagnosis.accuracy import cohort_counterfactual, score
+    from .brain.diagnosis.engine import diagnose_batch
+
+    batch = generate(seed=args.seed)
+    diagnoses, signals = diagnose_batch(batch.records, batch.traffic, llm=None)
+    report = score(batch.records, diagnoses, batch.truth)
+    counter = cohort_counterfactual(batch.records, signals, batch.truth)
+
+    if args.json:
+        print(json.dumps({"accuracy": report.as_dict(),
+                          "cohort_counterfactual": counter}, indent=2))
+        return 0
+
+    print()
+    print(f"{BOLD}DIAGNOSIS ACCURACY{OFF}  "
+          f"{DIM}(n={report.total}, ground truth known by construction){OFF}")
+    print()
+    order = ["deterministic", "cohort", "llm", "fallback"]
+    for name in sorted(report.layers, key=lambda n: order.index(n)
+                       if n in order else 99):
+        s = report.layers[name]
+        tint = GREEN if s.accuracy >= 0.9 else (YELLOW if s.accuracy > 0 else DIM)
+        print(f"  {name:<16} {s.total:>4} records   "
+              f"{tint}{s.accuracy:>6.1%}{OFF} correct")
+    print()
+    print(f"  {BOLD}overall{OFF}          {report.total:>4} records   "
+          f"{report.accuracy:>6.1%} correct")
+
+    if report.confusions:
+        print()
+        print(f"  {DIM}unresolved / confused:{OFF}")
+        for (truth, pred), n in report.confusions.most_common(5):
+            print(f"     {truth:<22} diagnosed as {pred:<18} {n:>3}")
+
+    print()
+    print(f"{BOLD}COHORT SIGNAL — what it prevented{OFF}")
+    print(f"  {counter['records_flagged_as_outage']} records on "
+          f"{counter['issuer']} carried a generic 'declined by the bank' error.")
+    print(f"  Without the cohort signal they read as customer-side failures and "
+          f"each earns a message.")
+    print(f"  {GREEN}needless customer contacts prevented: "
+          f"{counter['needless_contacts_prevented']}{OFF}")
+    print()
+    return 0
+
+
 def cmd_config(args) -> int:
     payload = {
         "dry_run": settings.dry_run,
@@ -159,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
         ("seed", cmd_seed, "generate the synthetic at-risk batch"),
         ("detect", cmd_detect, "run all detectors over the at-risk store"),
         ("verify", cmd_verify, "structural self-audit of the build"),
+        ("diagnose", cmd_diagnose, "diagnose the batch and score it against ground truth"),
         ("harvest", cmd_harvest, "harvest real Razorpay error codes into fixtures"),
         ("config", cmd_config, "show effective settings"),
     ]:
@@ -169,6 +217,8 @@ def main(argv: list[str] | None = None) -> int:
     subs.choices["harvest"].add_argument(
         "--collect", action="store_true",
         help="fetch failed payments and write the fixture (default: mint links)")
+
+    subs.choices["diagnose"].add_argument("--seed", type=int, default=settings.seed)
 
     seed_p = subs.choices["seed"]
     seed_p.add_argument("--seed", type=int, default=settings.seed)
