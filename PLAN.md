@@ -79,12 +79,12 @@ error → RootCause → ProposedAction → ALLOW/BLOCK without touching Razorpay
 - [x] **2.2 Cohort signal** (1h)
   - Group batch by (issuer, hour bucket), compute failure rate vs baseline
   - This is what turns "declined" into BANK_DOWNTIME → silent retry
-- [ ] **2.3 LLM diagnosis** (2.5h)
+- [x] **2.3 LLM diagnosis** (2.5h)
   - Forced tool use (`record_diagnosis`), `claude-sonnet-5`
   - Pydantic validation; validation failure → UNKNOWN → human
   - Signature cache + semaphore(8)
   - Fallback chain: LLM → deterministic → UNKNOWN. **Never crash the batch.**
-- [ ] **2.4 Policy engine** (1.5h)
+- [x] **2.4 Policy engine** (1.5h)
   - `policies.yaml` per PROJECT.md §6, loader in `brain/rules.py` (ONE loader —
     V2 swaps this for DB)
   - `decide(record, diagnosis) -> ProposedAction` with `policy_ref` set

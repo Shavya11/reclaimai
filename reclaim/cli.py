@@ -131,12 +131,24 @@ def cmd_harvest(args) -> int:
     return 0
 
 
+def _diagnoser(args):
+    """None when the key is absent or --no-llm is passed. Both are real code
+    paths: the batch must complete either way."""
+    if getattr(args, "no_llm", False):
+        return None
+    from .brain.diagnosis.llm_diagnoser import LLMDiagnoser
+
+    llm = LLMDiagnoser()
+    return llm if llm.available else None
+
+
 def cmd_diagnose(args) -> int:
     from .brain.diagnosis.accuracy import cohort_counterfactual, score
     from .brain.diagnosis.engine import diagnose_batch
 
     batch = generate(seed=args.seed)
-    diagnoses, signals = diagnose_batch(batch.records, batch.traffic, llm=None)
+    llm = _diagnoser(args)
+    diagnoses, signals = diagnose_batch(batch.records, batch.traffic, llm=llm)
     report = score(batch.records, diagnoses, batch.truth)
     counter = cohort_counterfactual(batch.records, signals, batch.truth)
 
@@ -174,6 +186,68 @@ def cmd_diagnose(args) -> int:
           f"each earns a message.")
     print(f"  {GREEN}needless customer contacts prevented: "
           f"{counter['needless_contacts_prevented']}{OFF}")
+    if llm is not None:
+        print()
+        print(f"  {DIM}LLM: {llm.calls} calls, {llm.cache_hits} cache hits "
+              f"({llm.model}){OFF}")
+    elif not getattr(args, "no_llm", False):
+        print()
+        print(f"  {DIM}no ANTHROPIC_API_KEY — layer 2 skipped, batch still "
+              f"completed{OFF}")
+    print()
+    return 0
+
+
+def cmd_plan(args) -> int:
+    """Day 2 checkpoint: a proposed action for every record, with the policy row
+    that decided it. Nothing is executed."""
+    from .brain.diagnosis.engine import diagnose_batch
+    from .brain.policy import decide
+
+    batch = generate(seed=args.seed)
+    llm = _diagnoser(args)
+    diagnoses, _ = diagnose_batch(batch.records, batch.traffic, llm=llm)
+    actions = [decide(r, diagnoses[r.id]) for r in batch.records]
+
+    by_action = Counter(a.action_type.value for a in actions)
+    by_policy = Counter(a.policy_ref for a in actions)
+    contacts = sum(1 for a in actions if a.action_type.contacts_customer)
+
+    if args.json:
+        print(json.dumps({
+            "records": len(actions),
+            "by_action": dict(by_action),
+            "by_policy_ref": dict(by_policy),
+            "customer_contacts_proposed": contacts,
+            "actions": [
+                {"record_id": a.record_id, "action": a.action_type.value,
+                 "channel": a.channel.value if a.channel else None,
+                 "policy_ref": a.policy_ref, "attempt": a.attempt_number,
+                 "scheduled_for": a.scheduled_for.isoformat(),
+                 "idempotency_key": a.idempotency_key,
+                 "amount_paise": a.amount}
+                for a in actions
+            ],
+        }, indent=2))
+        return 0
+
+    print()
+    print(f"{BOLD}PROPOSED ACTIONS{OFF}  {DIM}(nothing executed){OFF}")
+    print()
+    for name, n in by_action.most_common():
+        print(f"  {name:<16} {n:>4}")
+    print()
+    print(f"  {BOLD}customer contacts proposed: {contacts}{OFF}")
+    print()
+    print(f"{BOLD}BY POLICY ROW{OFF}")
+    for ref, n in by_policy.most_common(8):
+        print(f"  {ref:<44} {n:>4}")
+    print()
+    print(f"{DIM}sample — every action carries the row that decided it:{OFF}")
+    for a in actions[:4]:
+        print(f"  {a.record_id}  {a.action_type.value:<13} {a.policy_ref:<40}")
+        print(f"     {DIM}{a.scheduled_for:%Y-%m-%d %H:%M} IST   "
+              f"key={a.idempotency_key}{OFF}")
     print()
     return 0
 
@@ -207,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         ("detect", cmd_detect, "run all detectors over the at-risk store"),
         ("verify", cmd_verify, "structural self-audit of the build"),
         ("diagnose", cmd_diagnose, "diagnose the batch and score it against ground truth"),
+        ("plan", cmd_plan, "propose an action for every record (nothing executed)"),
         ("harvest", cmd_harvest, "harvest real Razorpay error codes into fixtures"),
         ("config", cmd_config, "show effective settings"),
     ]:
@@ -218,7 +293,10 @@ def main(argv: list[str] | None = None) -> int:
         "--collect", action="store_true",
         help="fetch failed payments and write the fixture (default: mint links)")
 
-    subs.choices["diagnose"].add_argument("--seed", type=int, default=settings.seed)
+    for name in ("diagnose", "plan"):
+        subs.choices[name].add_argument("--seed", type=int, default=settings.seed)
+        subs.choices[name].add_argument("--no-llm", action="store_true",
+                                        help="skip layer 2 and prove the batch still completes")
 
     seed_p = subs.choices["seed"]
     seed_p.add_argument("--seed", type=int, default=settings.seed)

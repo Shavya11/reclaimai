@@ -1,0 +1,169 @@
+# Policy table. Rules are DATA, not code — V2 swaps this file for a DB table
+# without touching diagnosis, policy or guardrail logic.
+#
+# Keyed by leak_type, then root_cause. Every row states a rationale, because the
+# audit trail quotes it back and "why did it do that?" must have an answer that
+# was written before the run, not after.
+#
+# Five rows are no_auto_action. That is deliberate and it is the differentiator:
+# knowing when the right move is to stop and fetch a human is what separates this
+# from something that always acts.
+
+FAILED_PAYMENT:
+
+  BANK_DOWNTIME:
+    strategy: silent_retry
+    schedule: ["20m", "2h", "24h"]
+    max_attempts: 3
+    notify_customer: false
+    rationale: >-
+      Transient issuer outage. The customer did nothing wrong and can do nothing
+      about it; contacting them creates needless alarm and support load.
+
+  INSUFFICIENT_FUNDS:
+    strategy: scheduled_retry
+    schedule: ["next_salary_window", "+7d"]
+    max_attempts: 2
+    notify_customer: true
+    channel: WHATSAPP
+    tone: gentle
+    rationale: >-
+      A timing problem, not intent. Retrying at the moment balance is likeliest
+      to have been restored is worth more than retrying sooner.
+
+  EXPIRED_INSTRUMENT:
+    strategy: request_new_method
+    schedule: ["immediate", "+48h"]
+    max_attempts: 2
+    notify_customer: true
+    channel: EMAIL
+    tone: neutral
+    prefill_method: upi
+    rationale: >-
+      No retry can succeed against a dead card. Customer action is required, and
+      the link must not send them back to the instrument that just failed.
+
+  INVALID_INSTRUMENT:
+    strategy: request_new_method
+    schedule: ["immediate", "+48h"]
+    max_attempts: 2
+    notify_customer: true
+    channel: EMAIL
+    tone: neutral
+    prefill_method: upi
+    rationale: >-
+      The card details cannot be corrected by us. Ask once, offer an easier
+      method, and stop.
+
+  AUTH_DROPOFF:
+    strategy: friction_reduction
+    schedule: ["15m", "+24h"]
+    max_attempts: 2
+    notify_customer: true
+    channel: SMS
+    tone: gentle
+    prefill_method: upi
+    rationale: >-
+      The customer intended to pay and abandoned at 3DS/OTP. UPI removes the
+      step they gave up on, so reduce friction rather than repeat it.
+
+  LIMIT_EXCEEDED:
+    strategy: scheduled_retry
+    schedule: ["+1d@10:00"]
+    max_attempts: 1
+    notify_customer: false
+    rationale: >-
+      A daily or per-transaction cap resets on its own. Retry once after the
+      reset; telling the customer adds nothing they can act on.
+
+  TECHNICAL_ERROR:
+    strategy: silent_retry
+    schedule: ["10m", "1h"]
+    max_attempts: 2
+    notify_customer: false
+    rationale: >-
+      Our side or the integration. Never make a customer answer for our bug.
+
+  CART_ABANDONMENT:
+    strategy: no_auto_action
+    escalate_to: human
+    rationale: >-
+      A cart abandonment recorded against a payment attempt is a detector bug.
+      Escalate rather than guess.
+
+  RISK_DECLINE:
+    strategy: no_auto_action
+    escalate_to: human
+    rationale: >-
+      The issuer flagged risk. Repeated retries against a risk decline look like
+      card testing and can cost the merchant its account.
+
+  MANDATE_REVOKED:
+    strategy: no_auto_action
+    escalate_to: human
+    rationale: >-
+      The customer cancelled the mandate. Retrying is charging someone who has
+      explicitly withdrawn permission.
+
+  POLICY_BLOCK:
+    strategy: no_auto_action
+    escalate_to: human
+    rationale: >-
+      Blocked by merchant or network policy. No amount of retrying changes a
+      configuration decision.
+
+  UNKNOWN:
+    strategy: no_auto_action
+    escalate_to: human
+    rationale: >-
+      Insufficient confidence to act on someone's money. An honest UNKNOWN that
+      reaches a human beats a confident guess that reaches their bank account.
+
+ABANDONED_CART:
+
+  CART_ABANDONMENT:
+    strategy: friction_reduction
+    schedule: ["2h", "+24h"]
+    max_attempts: 2
+    notify_customer: true
+    channel: WHATSAPP
+    tone: gentle
+    prefill_method: upi
+    rationale: >-
+      Intent was shown and never completed. One nudge with a frictionless link,
+      one follow-up, then stop.
+
+  UNKNOWN:
+    strategy: no_auto_action
+    escalate_to: human
+    rationale: "Insufficient confidence to act."
+
+FAILED_MANDATE:
+
+  MANDATE_REVOKED:
+    strategy: no_auto_action
+    escalate_to: human
+    rationale: >-
+      Permission was withdrawn. This is a sales conversation, not a retry.
+
+  BANK_DOWNTIME:
+    strategy: silent_retry
+    schedule: ["2h", "24h"]
+    max_attempts: 2
+    notify_customer: false
+    rationale: "Mandate debits fail on outages like anything else."
+
+  INSUFFICIENT_FUNDS:
+    strategy: scheduled_retry
+    schedule: ["next_salary_window"]
+    max_attempts: 2
+    notify_customer: true
+    channel: SMS
+    tone: gentle
+    rationale: >-
+      Recurring debits fail hardest just before payday. Retry after it.
+
+  UNKNOWN:
+    strategy: no_auto_action
+    escalate_to: human
+    rationale: "Insufficient confidence to act."
