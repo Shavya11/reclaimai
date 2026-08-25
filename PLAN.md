@@ -12,8 +12,8 @@ Read `PROJECT.md` first for the spec. This file is the schedule and the checklis
 
 ## Status
 
-- [ ] Day 1 — Foundation
-- [ ] Day 2 — Brain
+- [ ] Day 1 — Foundation  (1.2 error-code harvest outstanding)
+- [x] Day 2 — Brain
 - [ ] Day 3 — Hands
 - [ ] Day 4 — Face + Proof
 
@@ -89,13 +89,13 @@ error → RootCause → ProposedAction → ALLOW/BLOCK without touching Razorpay
     V2 swaps this for DB)
   - `decide(record, diagnosis) -> ProposedAction` with `policy_ref` set
   - Schedule resolver: `20m`, `+7d`, `+1d@10:00`, `next_salary_window`, `immediate`
-- [ ] **2.5 Guardrail engine** (2.5h)
+- [x] **2.5 Guardrail engine** (2.5h)
   - `brain/guardrails/base.py` — Protocol, Verdict, `evaluate_all` collecting ALL
     violations, never raising
   - All 13 rules, one file each in `rules/`
   - `GuardrailResult(allowed, violations, deferred_until, requires_human)`
   - Blocked ≠ dropped: compute `deferred_until` per violation
-- [ ] **2.6 Guardrail tests** (1.5h) ← DO NOT SKIP, judges will ask
+- [x] **2.6 Guardrail tests** (1.5h) ← DO NOT SKIP, judges will ask
   - The 8 named tests in PROJECT.md §7
   - 2 property tests (hypothesis): frequency-cap invariant, idempotency invariant
   - `pytest tests/test_guardrails.py` must be green before Day 3

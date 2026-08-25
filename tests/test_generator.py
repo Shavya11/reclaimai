@@ -53,6 +53,31 @@ def test_opt_out_and_dnd_populations_exist(batch):
     assert any(c.on_dnd for c in batch.customers)
 
 
+def test_opted_out_customers_actually_receive_contact_attempts(batch):
+    """Guardrail #2 is demo beat #4. Flags assigned at random leave it to chance
+    whether consent ever fires — with 3 opted-out customers in 55 it usually
+    does not, and a guardrail that never fires cannot be demonstrated."""
+    from reclaim.synthetic.generator import CONTACTING_CAUSES
+
+    opted = {c.id for c in batch.customers if c.opted_out}
+    reachable = {r.counterparty_id for r in batch.records
+                 if batch.truth[r.id] in CONTACTING_CAUSES}
+    assert len(opted & reachable) >= 3
+
+
+def test_dnd_customers_actually_receive_contact_attempts(batch):
+    from reclaim.synthetic.generator import CONTACTING_CAUSES
+
+    dnd = {c.id for c in batch.customers if c.on_dnd}
+    reachable = {r.counterparty_id for r in batch.records
+                 if batch.truth[r.id] in CONTACTING_CAUSES}
+    assert len(dnd & reachable) >= 3
+
+
+def test_opt_out_and_dnd_are_disjoint(batch):
+    assert not any(c.opted_out and c.on_dnd for c in batch.customers)
+
+
 def test_frequency_cap_has_something_to_fire_on(batch):
     """Guardrail #7 is customer-level. It is only meaningful if some customers
     own several records."""

@@ -209,6 +209,11 @@ def cmd_plan(args) -> int:
     diagnoses, _ = diagnose_batch(batch.records, batch.traffic, llm=llm)
     actions = [decide(r, diagnoses[r.id]) for r in batch.records]
 
+    from .brain import gate
+
+    report = gate.run(batch.records, diagnoses, actions,
+                      {c.id: c for c in batch.customers})
+
     by_action = Counter(a.action_type.value for a in actions)
     by_policy = Counter(a.policy_ref for a in actions)
     contacts = sum(1 for a in actions if a.action_type.contacts_customer)
@@ -219,6 +224,7 @@ def cmd_plan(args) -> int:
             "by_action": dict(by_action),
             "by_policy_ref": dict(by_policy),
             "customer_contacts_proposed": contacts,
+            "guardrails": report.as_dict(),
             "actions": [
                 {"record_id": a.record_id, "action": a.action_type.value,
                  "channel": a.channel.value if a.channel else None,
@@ -244,10 +250,33 @@ def cmd_plan(args) -> int:
         print(f"  {ref:<44} {n:>4}")
     print()
     print(f"{DIM}sample — every action carries the row that decided it:{OFF}")
-    for a in actions[:4]:
+    for a in actions[:3]:
         print(f"  {a.record_id}  {a.action_type.value:<13} {a.policy_ref:<40}")
         print(f"     {DIM}{a.scheduled_for:%Y-%m-%d %H:%M} IST   "
               f"key={a.idempotency_key}{OFF}")
+
+    print()
+    print(f"{BOLD}GUARDRAILS{OFF}")
+    print(f"  The agent wanted to take {BOLD}{report.proposed}{OFF} actions.")
+    print(f"  It was allowed {GREEN}{report.allowed}{OFF}.")
+    print(f"  {RED}{report.blocked}{OFF} were blocked — "
+          f"{report.deferred} deferred, {report.requiring_human} sent to a human.")
+    print()
+    for name, n in report.blocked_by.most_common():
+        print(f"     {name:<20} {n:>4}")
+
+    blocked = [o for o in report.outcomes if not o.result.allowed]
+    if blocked:
+        print()
+        print(f"{DIM}every refusal carries its reason:{OFF}")
+        seen = set()
+        for o in blocked:
+            v = o.result.violations[0]
+            if v.guardrail in seen:
+                continue
+            seen.add(v.guardrail)
+            print(f"  {o.action.record_id}  {RED}{v.guardrail}{OFF}")
+            print(f"     {DIM}{v.reason}{OFF}")
     print()
     return 0
 

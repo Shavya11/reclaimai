@@ -88,8 +88,9 @@ def _make_customers(rng: random.Random) -> list[Customer]:
                 id=cid,
                 email=f"customer{i}@example.com",
                 phone=f"+9198{rng.randint(10000000, 99999999)}",
-                opted_out=rng.random() < OPT_OUT_RATE,
-                on_dnd=rng.random() < DND_RATE,
+                # Assigned after records exist — see _assign_contact_flags.
+                opted_out=False,
+                on_dnd=False,
                 successful_payments_lifetime=rng.randint(1, 9) if has_history else 0,
                 last_successful_at=(
                     now() - timedelta(days=rng.randint(20, 200)) if has_history else None
@@ -194,8 +195,44 @@ def generate(seed: int = 42, n: int = 120) -> Batch:
         )
         truth[rid] = cause
 
+    _assign_contact_flags(customers, records, truth, rng)
     return Batch(records=records, customers=customers, truth=truth,
                  traffic=_traffic(records, truth))
+
+
+# Causes whose policy row contacts the customer. Only these can ever trip the
+# consent, DND, quiet-hours, cooldown or frequency-cap guardrails.
+CONTACTING_CAUSES = frozenset({
+    RootCause.INSUFFICIENT_FUNDS, RootCause.EXPIRED_INSTRUMENT,
+    RootCause.INVALID_INSTRUMENT, RootCause.AUTH_DROPOFF,
+    RootCause.CART_ABANDONMENT,
+})
+
+
+def _assign_contact_flags(customers, records, truth, rng) -> None:
+    """Put opt-out and DND flags on customers who will actually be contacted.
+
+    Assigning them at random leaves it to chance whether the consent guardrail
+    ever fires — with 3 opted-out customers in 55, it usually does not. A
+    fixture that cannot exercise a guardrail cannot demonstrate it, so coverage
+    is guaranteed here rather than hoped for.
+    """
+    owners: dict[str, list[str]] = {}
+    for r in records:
+        if truth[r.id] in CONTACTING_CAUSES:
+            owners.setdefault(r.counterparty_id, []).append(r.id)
+
+    contactable = sorted(owners)
+    rng.shuffle(contactable)
+    by_id = {c.id: c for c in customers}
+
+    n_opted = max(3, round(len(customers) * OPT_OUT_RATE))
+    n_dnd = max(4, round(len(customers) * DND_RATE))
+
+    for cid in contactable[:n_opted]:
+        by_id[cid].opted_out = True
+    for cid in contactable[n_opted:n_opted + n_dnd]:
+        by_id[cid].on_dnd = True
 
 
 def bucket_key(issuer: str, dt) -> str:

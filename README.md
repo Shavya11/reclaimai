@@ -20,14 +20,16 @@ python -m venv .venv
 
 .venv/Scripts/python -m reclaim.cli verify     # structural self-audit
 .venv/Scripts/python -m reclaim.cli seed       # generate the batch (seeded)
-.venv/Scripts/python -m reclaim.cli detect     # -> 120 records, ₹8,65,686 at risk
-.venv/Scripts/python -m pytest -q              # 35 passed
+.venv/Scripts/python -m reclaim.cli detect     # -> 120 records, ₹6,92,056 at risk
+.venv/Scripts/python -m reclaim.cli diagnose   # accuracy vs ground truth
+.venv/Scripts/python -m reclaim.cli plan       # proposed actions + guardrail blocks
+.venv/Scripts/python -m pytest -q              # 123 passed
 ```
 
 Every command takes `--json`.
 
 **The batch is seeded.** `seed 42` produces the same 120 records and the same
-`₹8,65,686` total on every machine, every run. Numbers quoted here are meant to be
+`₹6,92,056` total on every machine, every run. Numbers quoted here are meant to be
 reproduced, not trusted.
 
 ---
@@ -48,9 +50,10 @@ PASS  audit_log is append-only at the database
 PASS  batch is reproducible from seed
 PASS  detectors cover all V1 leak types
 PASS  outcome simulator covers every RootCause
-TODO  deterministic map yields valid causes      (Day 2)
-TODO  policies.yaml covers every RootCause       (Day 2)
-TODO  13 guardrails implemented                  (Day 2)
+PASS  deterministic map yields valid causes
+PASS  policies.yaml covers every RootCause
+PASS  13 guardrails implemented
+TODO  deterministic map matches harvested codes  (needs `cli harvest`)
 ```
 
 ---
@@ -67,6 +70,57 @@ passed in, so it cannot drift from the tuple it represents.
 someone can forget. [db.py](reclaim/db.py)
 
 Both are proved in [tests/test_foundation.py](tests/test_foundation.py), not asserted here.
+
+---
+
+## Diagnosis is measured, not asserted
+
+The generator records the cause it planted in every record, so accuracy is
+scored against ground truth rather than demonstrated by anecdote:
+
+```
+DIAGNOSIS ACCURACY  (n=120, ground truth known by construction)
+  deterministic      69 records   100.0% correct
+  cohort             15 records   100.0% correct
+  fallback           36 records     0.0% correct   <- layer 2's job
+```
+
+**The cohort signal earns its place.** Fifteen records on one issuer inside one
+hour carry a generic "declined by the bank" error. Read alone, each is a
+customer-side failure worth a message. Read together, the issuer is down at a
+0.71 failure rate against a 0.045 baseline — a 15.75x ratio — so the agent stays
+silent and retries in twenty minutes. **Fifteen needless customer contacts
+prevented**, and the counterfactual is computed, not claimed.
+
+## Restraint, in numbers
+
+```
+The agent wanted to take 120 actions.
+It was allowed 54.
+66 were blocked — 17 deferred, 43 sent to a human.
+
+   confidence_floor       40
+   cooldown               17
+   value_ceiling           7
+   consent                 5
+   dnd                     3
+```
+
+Every refusal carries its reason and what happens next: a time to retry, a human
+to route to, or a permanent stop. `audit_log` records blocks as loudly as
+executions.
+
+## The LLM never touches money
+
+Layer 2 runs only on the ~40% of records an error string cannot resolve, using
+forced tool use against a closed enum. The model cannot invent a root cause —
+only pick a wrong one from a fixed list, which the policy table and the thirteen
+guardrails below it still contain. A schema violation becomes `UNKNOWN` and
+reaches a human; it never becomes a guess.
+
+`--no-llm` is a real code path, not a mock: the batch completes with the API
+down. [tests/test_llm_diagnosis.py](tests/test_llm_diagnosis.py) proves it
+against a fake client, so none of it needs a key to verify.
 
 ---
 
