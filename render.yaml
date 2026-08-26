@@ -1,34 +1,61 @@
-# Render blueprint. Point Render at this repo and it reads this file.
+# Render blueprint — the API, the webhook receiver, and nothing else.
 #
-# The purpose of this deployment is a public URL Razorpay can POST a webhook to.
-# It is not where the demo should be driven from: free instances spin down after
-# ~15 minutes idle and cold-start in 30-50 seconds, which is a bad thing to
-# discover in front of judges. Run the demo locally; let this one receive.
+# Point Render at this repo and it reads this file. Native Python runtime, no
+# container: Render installs requirements.txt and runs uvicorn directly, which
+# is one less build step to go wrong on a deadline.
+#
+# The dashboard lives on Vercel (see ui/vercel.json). This service still serves
+# a copy of it at / from the committed ui/out, which is a useful fallback but
+# not the URL to demo from.
+#
+# THE REASON THIS DEPLOYMENT EXISTS is the webhook. Everything else about it is
+# incidental: a public URL is the only thing standing between this project and
+# a genuine Razorpay delivery, which is the last untested seam in the system.
 
 services:
   - type: web
-    name: reclaimai
-    runtime: docker
+    name: reclaimai-api
+    runtime: python
     plan: free
-    dockerfilePath: ./Dockerfile
+    region: singapore # closest to Razorpay; keeps webhook round-trips short
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn reclaim.api.app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
 
-    # A free instance has an ephemeral disk, so the database is wiped on every
+    # A free instance has an ephemeral disk: the database is wiped on every
     # restart and SEED_ON_BOOT rebuilds a batch. To keep data across restarts,
-    # move to a paid plan and uncomment the disk below — nothing else changes.
+    # move to a paid plan and uncomment this. Nothing else changes.
     # disk:
     #   name: reclaim-data
-    #   mountPath: /app/data
+    #   mountPath: /var/data
     #   sizeGB: 1
 
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+      # A cold instance starts with an empty disk, and an empty disk serves an
+      # empty dashboard. Guarded on the table being empty rather than on this
+      # flag alone, so a restart cannot wipe a batch someone is demonstrating.
       - key: SEED_ON_BOOT
         value: "true"
 
-      # Keep DRY_RUN on unless you specifically want the hosted instance minting
-      # real test-mode payment links. Test mode moves no real money, but a
-      # public URL that can create payment links is still worth being deliberate
-      # about. Turn it off only for the live webhook proof.
+      # The rupee sign is in almost every line this program logs, and a process
+      # without this dies formatting money on a non-UTF-8 default.
+      - key: PYTHONIOENCODING
+        value: utf-8
+
+      # Set this to your Vercel URL once the frontend is deployed, with no
+      # trailing slash — e.g. https://reclaimai.vercel.app. Without it the
+      # browser refuses every /api/* call from the dashboard and the page sits
+      # on a red banner. Vercel *preview* URLs are matched by a regex in
+      # api/app.py and do not need listing here.
+      - key: CORS_ORIGINS
+        sync: false
+
+      # Keep DRY_RUN true unless you are specifically doing the live webhook
+      # proof. Test mode moves no real money, but a public URL that can mint
+      # payment links is still worth being deliberate about.
       - key: DRY_RUN
         value: "true"
 
@@ -36,16 +63,16 @@ services:
         value: "true"
 
       - key: DATABASE_URL
-        value: sqlite:////app/data/reclaim.db
+        value: sqlite:////tmp/reclaim.db
 
       - key: TIMEZONE
         value: Asia/Kolkata
 
-      # sync: false means "prompt me, do not store it in git". Set these three in
-      # the Render dashboard. The webhook secret must match the one you type into
-      # the Razorpay webhook form character for character, or every delivery
-      # fails verification and is discarded — which is the correct behaviour and
-      # an infuriating way to spend an afternoon.
+      # sync: false means "prompt me, do not store it in git". Set these in the
+      # Render dashboard. RAZORPAY_WEBHOOK_SECRET must match the string you type
+      # into the Razorpay webhook form character for character — a mismatch
+      # means every delivery fails verification and is discarded, which is the
+      # correct behaviour and an infuriating way to spend an afternoon.
       - key: RAZORPAY_KEY_ID
         sync: false
       - key: RAZORPAY_KEY_SECRET

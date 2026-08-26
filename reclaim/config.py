@@ -40,6 +40,19 @@ class Settings(BaseSettings):
     # locally, where `cli demo` owns that decision.
     seed_on_boot: bool = False
 
+    # Comma-separated origins allowed to call /api/*. The dashboard is served
+    # from Vercel and the API from Render, so they are different origins and the
+    # browser will refuse the calls unless this names the UI exactly - scheme
+    # and host, no trailing slash. Localhost is always allowed for development.
+    cors_origins: str = ""
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        local = ["http://localhost:3000", "http://127.0.0.1:3000"]
+        extra = [o.strip().rstrip("/") for o in self.cors_origins.split(",")
+                 if o.strip()]
+        return local + extra
+
     @property
     def webhook_secret(self) -> str:
         """The secret webhook signatures are verified against.

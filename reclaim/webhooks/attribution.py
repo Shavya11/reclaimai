@@ -181,9 +181,15 @@ def handle(
 
         record = session.get(AtRiskRecordRow, intervention.record_id)
 
-        if intervention.result is not None:
-            reason = (f"Intervention {intervention.id} already resolved as "
-                      f"{intervention.result}; not counted twice.")
+        # Only money already counted is untouchable. NO_RESPONSE and
+        # FAILED_AGAIN both mean "no payment yet", not "no payment ever" — a
+        # customer can open a link days after it was sent, and a failed attempt
+        # can be retried on the same link and succeed. Treating either as final
+        # silently discards real money and leaves the agent chasing a record
+        # that has already paid.
+        if intervention.result == RESULT_RECOVERED:
+            reason = (f"Intervention {intervention.id} already recovered "
+                      f"{intervention.recovered_amount} paise; not counted twice.")
             audit.log(intervention.record_id, Stage.OUTCOME, ALREADY_ATTRIBUTED,
                       reason, payload={"event_id": event.event_id,
                                        "event_type": event.event_type,
@@ -201,6 +207,7 @@ def handle(
             amount = min(event.amount, record.amount) if (
                 event.amount and record) else (record.amount if record else event.amount)
 
+            was = intervention.result
             intervention.result = RESULT_RECOVERED
             intervention.recovered_amount = amount
             intervention.settled_at = now()
@@ -209,12 +216,14 @@ def handle(
                 record.next_action_at = None
             session.commit()
 
+            late = (f" Paid after this attempt was recorded as {was}."
+                    if was else "")
             reason = (
                 f"{event.event_type} on {event.refs[0] if event.refs else '?'} "
                 f"traced to intervention {intervention.id} "
                 f"({intervention.action_type}, attempt "
                 f"{intervention.attempt_number}, policy "
-                f"{intervention.policy_ref}). Record marked RECOVERED."
+                f"{intervention.policy_ref}). Record marked RECOVERED.{late}"
             )
             audit.log(intervention.record_id, Stage.OUTCOME, RESULT_RECOVERED,
                       reason,
@@ -225,6 +234,7 @@ def handle(
                                "recovered_paise": amount,
                                "attempt_number": intervention.attempt_number,
                                "policy_ref": intervention.policy_ref,
+                               "upgraded_from": was,
                                "simulated": simulated})
             _settle_event_row(event.event_id, PROCESSED, intervention.record_id)
             return Attribution(outcome=PROCESSED, event_id=event.event_id,
@@ -235,10 +245,13 @@ def handle(
 
         # payment.failed — the attempt is spent, the record is not recovered.
         # Bumping attempts here is what makes the max-attempts guardrail count
-        # reality rather than intentions.
+        # reality rather than intentions, which is also why it must only happen
+        # the first time this attempt resolves: a second failure event on an
+        # attempt already marked NO_RESPONSE would spend the budget twice.
+        first_resolution = intervention.result is None
         intervention.result = RESULT_FAILED_AGAIN
         intervention.settled_at = now()
-        if record is not None:
+        if record is not None and first_resolution:
             record.attempts = (record.attempts or 0) + 1
         session.commit()
 

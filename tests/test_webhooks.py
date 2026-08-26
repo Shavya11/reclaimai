@@ -35,9 +35,11 @@ from reclaim.webhooks.attribution import (
     ORPHAN,
     PROCESSED,
     RESULT_FAILED_AGAIN,
+    RESULT_NO_RESPONSE,
     RESULT_RECOVERED,
     UNATTRIBUTED,
     handle,
+    mark_no_response,
 )
 
 SECRET = "whsec_test_reclaim"
@@ -263,6 +265,96 @@ def test_two_different_events_for_one_payment_attribute_once():
         total = sum(i.recovered_amount for i in session.query(InterventionRow)
                     .filter(InterventionRow.record_id == intervention.record_id))
     assert total == amount
+
+
+def test_a_link_paid_late_is_still_credited():
+    """The customer opens the link a day after we gave up on it.
+
+    NO_RESPONSE means "no payment yet", not "no payment ever". Treating it as
+    final discards real money and leaves the agent chasing a record that has
+    already paid — and a live webhook hits this the first time anyone is slow
+    to click.
+    """
+    intervention = _executed_intervention()
+    with SessionLocal() as session:
+        amount = session.get(AtRiskRecordRow, intervention.record_id).amount
+
+    mark_no_response(intervention.id, reason="link delivered, not paid")
+    with SessionLocal() as session:
+        assert session.get(InterventionRow,
+                           intervention.id).result == RESULT_NO_RESPONSE
+
+    result = handle(payloads.payment_link_paid(
+        link_id=intervention.razorpay_ref, payment_id="pay_late", amount=amount,
+        record_id=intervention.record_id), event_id="evt_late")
+
+    assert result.outcome == PROCESSED
+    assert result.amount == amount
+    with SessionLocal() as session:
+        row = session.get(InterventionRow, intervention.id)
+        record = session.get(AtRiskRecordRow, intervention.record_id)
+        assert row.result == RESULT_RECOVERED
+        assert row.recovered_amount == amount
+        assert record.state == RecordState.RECOVERED.value
+
+
+def test_a_late_payment_on_a_failed_attempt_is_still_credited():
+    """Same principle for an attempt the bank already rejected: the customer can
+    retry the same link and succeed."""
+    intervention = _executed_intervention()
+    with SessionLocal() as session:
+        amount = session.get(AtRiskRecordRow, intervention.record_id).amount
+
+    handle(payloads.payment_failed(
+        payment_id="pay_no", amount=amount, record_id=intervention.record_id,
+        order_id=intervention.razorpay_ref), event_id="evt_failed")
+    result = handle(payloads.payment_link_paid(
+        link_id=intervention.razorpay_ref, payment_id="pay_yes", amount=amount,
+        record_id=intervention.record_id), event_id="evt_then_paid")
+
+    assert result.outcome == PROCESSED
+    with SessionLocal() as session:
+        assert session.get(InterventionRow,
+                           intervention.id).result == RESULT_RECOVERED
+
+
+def test_recovered_money_is_never_credited_twice():
+    """The other side of the same coin. Once the money is counted, a second
+    success event for it must not add to the total."""
+    intervention = _executed_intervention()
+    with SessionLocal() as session:
+        amount = session.get(AtRiskRecordRow, intervention.record_id).amount
+
+    first = handle(payloads.payment_link_paid(
+        link_id=intervention.razorpay_ref, payment_id="pay_1", amount=amount,
+        record_id=intervention.record_id), event_id="evt_1")
+    second = handle(payloads.payment_link_paid(
+        link_id=intervention.razorpay_ref, payment_id="pay_2", amount=amount,
+        record_id=intervention.record_id), event_id="evt_2")
+
+    assert first.outcome == PROCESSED
+    assert second.outcome == ALREADY_ATTRIBUTED
+    with SessionLocal() as session:
+        total = sum(i.recovered_amount for i in session.query(InterventionRow)
+                    .filter(InterventionRow.record_id == intervention.record_id))
+    assert total == amount
+
+
+def test_a_repeated_failure_does_not_spend_the_attempt_budget_twice():
+    intervention = _executed_intervention()
+    with SessionLocal() as session:
+        record = session.get(AtRiskRecordRow, intervention.record_id)
+        amount, before = record.amount, record.attempts
+
+    for eid in ("evt_f1", "evt_f2"):
+        handle(payloads.payment_failed(
+            payment_id=f"pay_{eid}", amount=amount,
+            record_id=intervention.record_id,
+            order_id=intervention.razorpay_ref), event_id=eid)
+
+    with SessionLocal() as session:
+        assert session.get(AtRiskRecordRow,
+                           intervention.record_id).attempts == before + 1
 
 
 def test_an_event_matching_nothing_is_logged_loudly_rather_than_dropped():

@@ -298,24 +298,25 @@ ui/                 Next.js dashboard, static-exported and served by FastAPI
 
 ## Deployment
 
-```bash
-docker build -t reclaimai . && docker run -p 8000:8000 -e SEED_ON_BOOT=true reclaimai
+**Render** runs the API and the webhook receiver; **Vercel** serves the
+dashboard. [DEPLOY.md](DEPLOY.md) is the step-by-step.
+
+```
+   Vercel  ──────────►  Render  ◄──────────  Razorpay
+  dashboard   /api/*      API        webhook   test mode
 ```
 
-[render.yaml](render.yaml) is a Render blueprint for the same image. **Its purpose
-is a public URL Razorpay can POST a webhook to, not hosting the demo** — free
-instances spin down after ~15 minutes idle and cold-start in 30-50 seconds, which
-is a bad thing to discover in front of an audience. Drive the demo locally; let
-the deployment receive.
+**The point of deploying is the webhook, not the hosting.** Everything else here
+has been exercised; a public URL is the only thing standing between this project
+and a genuine Razorpay delivery. Render's free instances cold-start in 30-50
+seconds, so drive the demo locally with `reclaim serve` and let the deployment
+receive.
 
-`SEED_ON_BOOT` generates one batch if the database is empty at startup, so a cold
-container is never a blank dashboard. It is guarded on the table being empty, not
-on the flag alone, so a restart cannot wipe a batch somebody is presently
-demonstrating.
-
-Set `RAZORPAY_WEBHOOK_SECRET` to the same string you type into the Razorpay
-webhook form. A mismatch means every delivery fails verification and is discarded
-— which is the correct behaviour and an infuriating way to spend an afternoon.
+`SEED_ON_BOOT` generates one batch if the database is empty at startup, guarded on
+the table being empty rather than the flag alone, so a restart cannot wipe a batch
+somebody is presently demonstrating. `CORS_ORIGINS` must name the Vercel URL
+exactly — the dashboard and the API are different origins, and the browser blocks
+every call otherwise.
 
 ## Honesty note
 

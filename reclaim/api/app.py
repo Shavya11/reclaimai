@@ -71,11 +71,19 @@ def _seed_if_empty() -> None:
 app = FastAPI(title="ReclaimAI", version="1.0", lifespan=_lifespan,
               description="AI revenue recovery agent — Razorpay Buildathon Track 03")
 
-# The dashboard is served from this same app in production, but a Next.js dev
-# server runs on another port during the build.
+# The dashboard lives on Vercel and this API on Render, so every call the
+# browser makes is cross-origin. CORS_ORIGINS names the production UI;
+# allow_origin_regex covers Vercel's per-commit preview URLs, which change on
+# every push and cannot be enumerated in advance.
+#
+# There are no cookies or credentials on this API, so a permissive origin list
+# grants a stranger's page nothing it could not get by calling the API directly.
+# The one endpoint that actually matters is /webhooks/razorpay, and that is
+# guarded by an HMAC signature rather than by an origin header.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=settings.allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
