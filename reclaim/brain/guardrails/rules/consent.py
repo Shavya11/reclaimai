@@ -20,4 +20,5 @@ class Consent:
             guardrail=self.name,
             reason="Customer has opted out of contact. Blocked permanently.",
             permanent=True,
+            closes_record=True,
         )

@@ -12,10 +12,11 @@ Read `PROJECT.md` first for the spec. This file is the schedule and the checklis
 
 ## Status
 
-- [ ] Day 1 — Foundation  (1.2 error-code harvest outstanding)
+- [ ] Day 1 — Foundation  (1.2 error-code harvest outstanding — blocked on paying
+      the 4 minted test links, then `cli harvest --collect`)
 - [x] Day 2 — Brain
-- [ ] Day 3 — Hands
-- [ ] Day 4 — Face + Proof
+- [x] Day 3 — Hands
+- [x] Day 4 — Face + Proof
 
 ---
 
@@ -118,13 +119,20 @@ scoreboard prints real recovered rupees.
 - [x] **3.2 Message generation** (1h)
   - Per-cause, per-tone copy. LLM may write the text; it may NOT choose the action
   - Include the payment link; keep it short and human
-- [ ] **3.3 Webhook receiver** (2h)
+- [x] **3.3 Webhook receiver** (2h)
   - FastAPI endpoint, HMAC-SHA256 signature verification (webhook secret)
   - Handle `payment.captured`, `payment_link.paid`, `order.paid`,
     `subscription.charged`, `payment.failed`
   - Idempotent handling — webhooks retry and can arrive twice
-  - Local tunnel (ngrok/cloudflared) for Razorpay to reach you
-- [ ] **3.4 Outcome attribution** (1.5h)
+  - ~~Local tunnel (ngrok/cloudflared)~~ — cloudflared is not installed, so there
+    is no public URL for Razorpay to reach. The receiver is exercised instead by
+    `reclaim/settlement.py`, which signs real payloads and posts them through the
+    same `receive()` a live delivery hits. `tests/test_webhooks.py` (19 tests)
+    is the evidence, including the raw-bytes-vs-reserialized-JSON case.
+    **Still to do when a tunnel exists:** point a Razorpay webhook at
+    `/webhooks/razorpay`, set `RAZORPAY_WEBHOOK_SECRET`, pay a link, confirm the
+    record flips to RECOVERED.
+- [x] **3.4 Outcome attribution** (1.5h)
   - link paid → find intervention → mark record RECOVERED → attribute ₹
   - This chain is the proof that the recovery was ours
 - [x] **3.5 Batch runner / orchestrator** (2h)
@@ -133,12 +141,13 @@ scoreboard prints real recovered rupees.
   - `/tick` endpoint + CLI so the demo can advance time on command
   - Time-travel flag (simulate "it is now the 1st") so salary-window retries are
     demoable in 5 minutes
-- [ ] **3.6 Scoreboard computation** (1h)
+- [x] **3.6 Scoreboard computation** (1h)
   - ₹ at risk / recovered / open / unrecoverable, rate by root cause,
     guardrails fired by type, escalations, contacts-per-recovery
 
-**Day 3 checkpoint:** `python -m reclaim.cli run-batch` completes 120 records and prints
-the PROJECT.md §9 scoreboard.
+**Day 3 checkpoint:** `python -m reclaim.cli run-batch` completes 120 records and
+`python -m reclaim.cli scoreboard` prints the PROJECT.md §9 scoreboard. A single
+tick only fires the actions that are *due*; `cli demo` walks the whole schedule.
 
 ---
 
@@ -146,32 +155,34 @@ the PROJECT.md §9 scoreboard.
 
 **Done when:** the demo has been rehearsed end-to-end twice without a crash.
 
-- [ ] **4.1 API layer** (1h)
+- [x] **4.1 API layer** (1h)
   - `GET /api/scoreboard`, `/api/records`, `/api/records/{id}/audit`,
     `/api/human-queue`, `POST /api/run-batch`, `POST /api/tick`
-- [ ] **4.2 Dashboard screen** (3h)
+- [x] **4.2 Dashboard screen** (3h)
   - Big numbers: at risk / recovered / rate
   - Recovery-by-root-cause bar chart
   - Guardrails-fired breakdown
   - Baseline-vs-ours comparison
-- [ ] **4.3 Recovery queue screen** (1.5h)
+- [x] **4.3 Recovery queue screen** (1.5h)
   - Table: record, amount, root cause, state, next action, next action time
   - Badge for deferred/blocked with the reason
-- [ ] **4.4 Audit trail screen** (1.5h)
+- [x] **4.4 Audit trail screen** (1.5h)
   - Click a record → full timeline: detected → diagnosed (with reasoning +
     evidence_used) → policy_ref → guardrail verdict → executed → outcome
   - **This screen is demo beat #3. Make it readable, not pretty.**
-- [ ] **4.5 Baseline runner** (1h)
+  - Built as one page with client-side tabs, not three routes: a static export
+    with no navigation cannot 404 on stage.
+- [x] **4.5 Baseline runner** (1h)
   - Naive strategy over the same batch: retry everything 3x immediately, message
     every failure, ignore quiet hours
   - Produces the comparison numbers
-- [ ] **4.6 Full run + metrics capture** (1h)
+- [x] **4.6 Full run + metrics capture** (1h)
   - Reset, generate, run, screenshot the scoreboard
   - Save the numbers somewhere quotable
-- [ ] **4.7 Demo rehearsal** (1h)
-  - Follow PROJECT.md §13 exactly, twice, with a timer
-  - Pre-stage the "graceful failure" (a kill switch for the Razorpay client)
-  - Have the guardrail test output ready in a second terminal
+- [x] **4.7 Demo rehearsal** (1h)
+  - Follow PROJECT.md §13 exactly, twice, with a timer — see `DEMO.md`
+  - Pre-staged graceful failure: `run-batch --kill-razorpay` (no live code edit)
+  - Guardrail test output ready in a second terminal
 
 ---
 

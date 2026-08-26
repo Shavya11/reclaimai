@@ -6,6 +6,7 @@
     still runs the full pipeline end to end
 """
 
+import hashlib
 import logging
 import random
 import time
@@ -25,6 +26,17 @@ _RETRYABLE_MESSAGES = ("too many requests", "rate limit", "timeout", "gateway")
 
 class RazorpayError(RuntimeError):
     pass
+
+
+def _stub_id(idempotency_key: str) -> str:
+    """A DRY_RUN id must be as unique as the real one it stands in for.
+
+    Slicing the key (`key[-8:]`) looks unique and is not: every SEND_LINK ends
+    in the same eight characters, so every stubbed link came back with the same
+    id and outcome attribution walked all of them to one intervention. A digest
+    of the whole key collides only if the keys do.
+    """
+    return hashlib.sha1(idempotency_key.encode("utf-8")).hexdigest()[:14]
 
 
 class RazorpayClient:
@@ -51,7 +63,7 @@ class RazorpayClient:
             lambda: self._client.order.create(
                 {"amount": amount, "currency": "INR", **kw}
             ),
-            stub={"id": f"order_stub_{idempotency_key[-8:]}", "amount": amount,
+            stub={"id": f"order_stub_{_stub_id(idempotency_key)}", "amount": amount,
                   "status": "created"},
         )
 
@@ -65,8 +77,8 @@ class RazorpayClient:
             "payment_link.create",
             idempotency_key,
             lambda: self._client.payment_link.create(payload),
-            stub={"id": f"plink_stub_{idempotency_key[-8:]}", "amount": amount,
-                  "short_url": f"https://rzp.io/i/stub{idempotency_key[-6:]}",
+            stub={"id": f"plink_stub_{_stub_id(idempotency_key)}", "amount": amount,
+                  "short_url": f"https://rzp.io/i/{_stub_id(idempotency_key)[:8]}",
                   "status": "created"},
         )
 
@@ -107,3 +119,22 @@ class RazorpayClient:
         if any(s in str(exc).lower() for s in _RETRYABLE_MESSAGES):
             return True
         return isinstance(exc, (TimeoutError, ConnectionError))
+
+
+class DeadRazorpayClient(RazorpayClient):
+    """Razorpay, unreachable. Demo beat #6.
+
+    Pre-staged rather than improvised: killing the integration on stage by
+    editing code is a good way to discover that the failure path was never
+    exercised. Every write raises, and the batch is expected to finish anyway -
+    records park for human review, no key is claimed twice, nothing crashes.
+    """
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        super().__init__(dry_run=True)
+
+    def create_order(self, *_args, **_kwargs):
+        raise RazorpayError("connection refused (simulated outage)")
+
+    def create_payment_link(self, *_args, **_kwargs):
+        raise RazorpayError("connection refused (simulated outage)")

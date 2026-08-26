@@ -68,11 +68,26 @@ class ProposedAction(_Base):
 
 
 class GuardrailViolation(_Base):
+    """`permanent` and `closes_record` are not the same thing, and conflating
+    them is how a record gets killed for the wrong reason.
+
+    `permanent` says THIS ACTION will never be allowed — do not reschedule it.
+    An idempotency block is permanent in that sense: attempt 3 of REC_9 will
+    never fire twice. The record itself is very much alive and moves on to
+    attempt 4.
+
+    `closes_record` says THE RECORD IS DONE — nobody will chase this money
+    again. Opting out closes it. So does age, and so does exhausting the
+    attempt cap. Treating an idempotency block as one of those would close
+    every record the moment it successfully did anything.
+    """
+
     guardrail: str
     reason: str
     deferred_until: datetime | None = None
     requires_human: bool = False
     permanent: bool = False
+    closes_record: bool = False
 
 
 class GuardrailResult(_Base):

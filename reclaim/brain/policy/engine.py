@@ -37,8 +37,18 @@ def decide(
     diagnosis: Diagnosis,
     *,
     frm: datetime | None = None,
+    anchor: datetime | None = None,
 ) -> ProposedAction:
+    """`frm` is now. `anchor` is what the schedule counts from.
+
+    They are different on purpose. "20m" means twenty minutes after the failure,
+    not twenty minutes after whenever the batch happens to run — anchoring on
+    the clock makes every schedule permanently twenty minutes away and nothing
+    ever comes due. Attempt 1 counts from detection; later attempts count from
+    the attempt before them, which is what a dunning ladder actually is.
+    """
     frm = frm or now()
+    anchor = anchor or record.detected_at or frm
     attempt = record.attempts + 1
     leak, cause = record.leak_type.value, diagnosis.root_cause.value
 
@@ -66,7 +76,7 @@ def decide(
                           f"Attempt {attempt} exceeds policy max of {max_attempts}.",
                           frm)
     try:
-        when = nth(schedule, attempt, frm)
+        when = nth(schedule, attempt, anchor)
     except ScheduleError as exc:
         raise PolicyError(f"{policy_ref}: {exc}") from exc
     if when is None:

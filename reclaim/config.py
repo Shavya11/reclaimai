@@ -7,6 +7,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# Not a secret and not pretending to be one. It exists so the webhook
+# signature path is real in DRY_RUN rather than bypassed.
+LOCAL_WEBHOOK_SECRET = "reclaim_local_dev_secret"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -29,6 +33,20 @@ class Settings(BaseSettings):
     timezone: str = "Asia/Kolkata"
 
     seed: int = 42
+
+    @property
+    def webhook_secret(self) -> str:
+        """The secret webhook signatures are verified against.
+
+        Live secret when one is configured. Otherwise — and ONLY in DRY_RUN —
+        a documented local constant, so a clone with no Razorpay account still
+        exercises the real signing and verification path instead of a branch
+        that skips it. Outside DRY_RUN a missing secret returns "", and every
+        delivery fails verification. Fail closed.
+        """
+        if self.razorpay_webhook_secret:
+            return self.razorpay_webhook_secret
+        return LOCAL_WEBHOOK_SECRET if self.dry_run else ""
 
     @property
     def has_razorpay(self) -> bool:

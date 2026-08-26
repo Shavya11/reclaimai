@@ -20,7 +20,10 @@ data/*.db
 # node / next
 node_modules/
 .next/
-out/
+
+# ui/out is the static export the FastAPI process serves. It is deliberately
+# tracked: 780 KB, and committing it means a reviewer can clone and run
+# `reclaim serve` without a 364-package npm install or a network connection.
 
 # editors / os
 .vscode/

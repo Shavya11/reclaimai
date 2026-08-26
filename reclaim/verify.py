@@ -174,13 +174,192 @@ def _record_stays_generic() -> Check:
 
 
 def _batch_is_reproducible() -> Check:
+    """Every field, not just the total.
+
+    Comparing totals alone passes while timestamps drift with the wall clock —
+    and timestamps decide which records fall inside quiet hours and which hour
+    bucket the cohort signal groups on, so the compliance numbers quietly move
+    between runs while the headline stays put. A digest catches that; a sum does
+    not.
+    """
+    import hashlib
+
     from .synthetic import generate
+
+    name = "batch is reproducible from seed"
+
+    def digest(batch) -> str:
+        h = hashlib.sha256()
+        for r in batch.records:
+            h.update(f"{r.id}|{r.amount}|{r.counterparty_id}|{r.leak_type.value}|"
+                     f"{r.detected_at.isoformat()}|{batch.truth[r.id].value}|"
+                     f"{r.raw_signals.get('issuer_bank')}".encode())
+        for c in batch.customers:
+            h.update(f"{c.id}|{c.opted_out}|{c.on_dnd}".encode())
+        return h.hexdigest()[:16]
 
     a, b = generate(seed=42), generate(seed=42)
     if a.total_at_risk != b.total_at_risk:
-        return Check("batch is reproducible from seed", FAIL, "totals differ")
-    return Check("batch is reproducible from seed", PASS,
-                 f"seed 42 -> {len(a.records)} records, {a.total_at_risk} paise, every run")
+        return Check(name, FAIL, "totals differ")
+    da, db = digest(a), digest(b)
+    if da != db:
+        return Check(name, FAIL, f"records differ between runs ({da} vs {db})")
+    if generate(seed=43).total_at_risk == a.total_at_risk:
+        return Check(name, FAIL, "a different seed produced the same batch")
+    return Check(name, PASS,
+                 f"seed 42 -> {len(a.records)} records, {a.total_at_risk} paise, "
+                 f"digest {da}, amounts AND timestamps identical every run")
+
+
+def _webhook_signature_covers_raw_bytes() -> Check:
+    """A verifier fed a re-serialized body never matches, and the usual response
+    to "signatures never match" is to stop checking them. This asserts the
+    verifier reads the bytes off the wire."""
+    import json
+
+    from .webhooks.signature import sign, verify
+
+    name = "webhook signature verifies raw bytes"
+    secret = "verify_probe_secret"
+    body = {"event": "payment_link.paid", "payload": {"b": 2, "a": 1}}
+    raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
+    signature = sign(raw, secret)
+
+    if not verify(raw, signature, secret):
+        return Check(name, FAIL, "a correctly signed body was rejected")
+    if verify(json.dumps(body, indent=2).encode("utf-8"), signature, secret):
+        return Check(name, FAIL, "a re-serialized body passed verification")
+    if verify(raw, signature, "") or verify(raw, None, secret):
+        return Check(name, FAIL, "verification passes without a secret or signature")
+    return Check(name, PASS,
+                 "raw-byte HMAC; re-serialized, unsigned and unkeyed bodies all refused")
+
+
+def _webhook_handlers_cover_the_five_events() -> Check:
+    from .webhooks.events import HANDLED_EVENTS
+
+    name = "webhook handles the five outcome events"
+    required = {"payment.captured", "payment_link.paid", "order.paid",
+                "subscription.charged", "payment.failed"}
+    missing = required - set(HANDLED_EVENTS)
+    if missing:
+        return Check(name, FAIL, f"missing: {', '.join(sorted(missing))}")
+    return Check(name, PASS, ", ".join(sorted(required)))
+
+
+def _scoreboard_balances() -> Check:
+    """recovered + open + unrecoverable == at risk. A scoreboard that does not
+    add up is one where a rupee got counted twice, and nothing crashes when it
+    happens."""
+    from .money import format_inr
+    from .scoreboard import compute
+
+    name = "scoreboard balances"
+    board = compute()
+    if board.records == 0:
+        return Check(name, PENDING, "no batch has been run yet — try `cli demo`")
+    if not board.balances:
+        return Check(name, FAIL,
+                     f"{format_inr(board.at_risk_paise)} at risk but the buckets "
+                     f"sum to {format_inr(board.recovered_paise + board.open_paise + board.unrecoverable_paise)}")
+    return Check(name, PASS,
+                 f"{format_inr(board.at_risk_paise)} = "
+                 f"{format_inr(board.recovered_paise)} recovered + "
+                 f"{format_inr(board.open_paise)} open + "
+                 f"{format_inr(board.unrecoverable_paise)} written off")
+
+
+def _every_recovered_rupee_is_attributed() -> Check:
+    """The scoreboard may not invent money the attribution chain did not trace
+    back to an intervention."""
+    from .db import InterventionRow, SessionLocal
+    from .money import format_inr
+    from .scoreboard import compute
+    from .webhooks.attribution import RESULT_RECOVERED
+
+    name = "every recovered rupee traces to an intervention"
+    board = compute()
+    if board.records == 0:
+        return Check(name, PENDING, "no batch has been run yet")
+    with SessionLocal() as session:
+        attributed = sum(
+            i.recovered_amount for i in session.query(InterventionRow)
+            .filter(InterventionRow.result == RESULT_RECOVERED))
+    if attributed != board.recovered_paise:
+        return Check(name, FAIL,
+                     f"scoreboard says {format_inr(board.recovered_paise)}, "
+                     f"attribution says {format_inr(attributed)}")
+    return Check(name, PASS,
+                 f"{format_inr(attributed)} across {board.recovered_records} "
+                 f"records, each traced from a verified webhook")
+
+
+def _no_idempotency_key_executed_twice() -> Check:
+    from sqlalchemy import func
+
+    from .db import ExecutedActionRow, SessionLocal
+
+    name = "no action executed twice"
+    with SessionLocal() as session:
+        total = session.query(ExecutedActionRow).count()
+        if total == 0:
+            return Check(name, PENDING, "nothing executed yet")
+        distinct = session.query(
+            func.count(func.distinct(ExecutedActionRow.idempotency_key))).scalar()
+    if total != distinct:
+        return Check(name, FAIL, f"{total} rows but {distinct} distinct keys")
+    return Check(name, PASS,
+                 f"{total} executions, {distinct} distinct keys, 0 duplicates")
+
+
+def _api_exposes_the_routes_the_ui_needs() -> Check:
+    name = "API exposes every documented route"
+    try:
+        from .api.app import app
+    except Exception as exc:  # noqa: BLE001
+        return Check(name, FAIL, f"api will not import: {exc!r}")
+
+    paths = {getattr(r, "path", "") for r in app.routes}
+    required = {"/api/scoreboard", "/api/records", "/api/records/{record_id}/audit",
+                "/api/human-queue", "/api/run-batch", "/api/tick",
+                "/webhooks/razorpay"}
+    missing = required - paths
+    if missing:
+        return Check(name, FAIL, f"missing: {', '.join(sorted(missing))}")
+    return Check(name, PASS, f"{len(required)} required routes present")
+
+
+def _baseline_gap_is_fully_accounted_for() -> Check:
+    """Publishing a comparison we can lose is only defensible if every rupee of
+    the difference has a stated reason."""
+    from .baseline import gap_analysis
+    from .money import format_inr
+    from .scoreboard import compute
+
+    name = "baseline gap is fully accounted for"
+    if compute().records == 0:
+        return Check(name, PENDING, "no batch has been run yet")
+    gap = gap_analysis()
+    reasons_total = sum(r["paise"] for r in gap["reasons"])
+    if reasons_total != gap["total"]["paise"]:
+        return Check(name, FAIL,
+                     f"{format_inr(gap['total']['paise'])} unexplained vs "
+                     f"{format_inr(reasons_total)} attributed to a reason")
+    if not gap["total"]["records"]:
+        return Check(name, PASS, "the naive strategy recovered nothing we did not")
+    return Check(name, PASS,
+                 f"{gap['total']['display']} the naive run collects and we do not, "
+                 f"of which {format_inr(gap['deliberate_paise'])} is refused on purpose")
+
+
+def _dashboard_is_built() -> Check:
+    name = "dashboard is built and servable"
+    out = ROOT / "ui" / "out" / "index.html"
+    if not out.exists():
+        return Check(name, PENDING,
+                     "run `npm run build` in ui/ — the API serves ui/out")
+    size = out.stat().st_size
+    return Check(name, PASS, f"ui/out/index.html present ({size // 1024} KB)")
 
 
 CHECKS = [
@@ -195,6 +374,14 @@ CHECKS = [
     _deterministic_map_matches_harvested_codes,
     _policies_cover_every_root_cause,
     _thirteen_guardrails,
+    _webhook_signature_covers_raw_bytes,
+    _webhook_handlers_cover_the_five_events,
+    _api_exposes_the_routes_the_ui_needs,
+    _no_idempotency_key_executed_twice,
+    _scoreboard_balances,
+    _every_recovered_rupee_is_attributed,
+    _baseline_gap_is_fully_accounted_for,
+    _dashboard_is_built,
 ]
 
 

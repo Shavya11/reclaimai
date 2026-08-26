@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from ..db import ExecutedActionRow, InterventionRow, SessionLocal
 from ..enums import ActionType, Channel
 from ..models import ProposedAction
-from ..timeutil import now
+from ..clock import now
 from .channels import ChannelSender, Delivery, recipient_for
 from .messages import render
 from .razorpay_client import RazorpayClient, RazorpayError

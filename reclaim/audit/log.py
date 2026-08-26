@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import select
 
+from ..clock import now
 from ..db import AuditLogRow, SessionLocal
 from ..enums import Stage
 
@@ -28,6 +29,10 @@ def log(
         reason=reason,
         payload=payload or {},
         deferred_until=deferred_until,
+        # The demo clock, not the wall clock. A trail timestamped months before
+        # the decision it records is unreadable, and reading it out loud is the
+        # entire point of this table.
+        at=now(),
     )
     with SessionLocal() as session:
         session.add(row)

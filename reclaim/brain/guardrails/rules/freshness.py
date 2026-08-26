@@ -21,4 +21,5 @@ class Freshness:
             reason=f"Record is {ctx.record_age_days:.0f} days old, past the "
                    f"{max_age:.0f}-day limit. Closing.",
             permanent=True,
+            closes_record=True,
         )

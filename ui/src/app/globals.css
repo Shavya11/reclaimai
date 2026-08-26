@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+/* A dark operations console rather than a marketing page. This gets projected
+   in a room with the lights on: high contrast, dense type, and colour used only
+   where it carries meaning — green for money recovered, red for an action
+   refused, amber for one waiting. Nothing is decorative. */
+
+:root {
+  --bg: #0b0d10;
+  --panel: #14181d;
+  --panel-2: #191e25;
+  --line: #262d36;
+  --ink: #e8edf3;
+  --muted: #8b97a6;
+  --dim: #5d6875;
+  --green: #34d399;
+  --green-dim: #10603f;
+  --red: #f87171;
+  --red-dim: #6b2020;
+  --amber: #fbbf24;
+  --blue: #60a5fa;
+  --violet: #a78bfa;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel2: var(--panel-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-dim: var(--dim);
+  --color-green: var(--green);
+  --color-red: var(--red);
+  --color-amber: var(--amber);
+  --color-blue: var(--blue);
+  --color-violet: var(--violet);
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-feature-settings: "tnum" 1; /* money in a column should line up */
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 6px;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}

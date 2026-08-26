@@ -21,6 +21,7 @@ class MaxAttempts:
                 reason=f"Attempt {action.attempt_number} exceeds the global hard "
                        f"cap of {hard_cap}.",
                 permanent=True,
+                closes_record=True,
             )
         if action.attempt_number > ctx.policy_max_attempts:
             return GuardrailViolation(
@@ -28,5 +29,6 @@ class MaxAttempts:
                 reason=f"Attempt {action.attempt_number} exceeds the policy max "
                        f"of {ctx.policy_max_attempts}.",
                 permanent=True,
+                closes_record=True,
             )
         return None

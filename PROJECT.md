@@ -524,6 +524,62 @@ extraction over a text transcript (~3h) instead of live audio.
 
 ---
 
+### What V1 actually shipped, and where it differs from the plan above
+
+Recorded here rather than quietly absorbed, because a spec that silently drifts
+from the build is worse than one that admits the drift.
+
+**Webhooks are real; the tunnel is not.** `cloudflared` is not installed on the
+build machine, so Razorpay has no public URL to reach. The receiver, the
+HMAC-SHA256 verification and the whole attribution chain are production code and
+carry 19 tests. What stands in for a live delivery is `reclaim/settlement.py`: it
+signs Razorpay-shaped payloads and posts them through the same `receive()` a real
+delivery hits, so nothing bypasses the signature check or the walk from
+`payment_link.paid` back to the intervention that minted the link. The outcome
+simulator decides only *whether the customer paid* — the judgement §10 already
+discloses as modelled. Wiring a live tunnel is a config change, not a code change.
+
+**Schedules anchor on the record, not on the clock.** `20m` means twenty minutes
+after the failure, not twenty minutes after whenever the batch happens to run.
+Anchoring on the wall clock makes every schedule permanently twenty minutes away
+and nothing ever comes due; the bug is invisible because the batch still looks
+busy. Attempt 1 counts from `detected_at`, attempt N from attempt N-1 — which is
+what a dunning ladder is. An action that is not yet due is parked on the record
+and picked up by a later tick.
+
+**A demo clock, persisted.** `reclaim/clock.py` adds an offset to the wall clock
+and stores it, so `cli tick --advance next_salary_window` survives across separate
+processes. Salary-window retries are a month out and 48-hour follow-ups are two
+days out; neither is watchable otherwise. Nothing outside a demo reads it, and
+`clock.reset()` puts it back.
+
+**`GuardrailViolation` gained `closes_record`.** `permanent` already meant "never
+reschedule THIS ACTION" — which is true of an idempotency block, where the record
+itself is alive and moving to its next attempt. Closing a record needs a separate
+flag, or every record gets killed the moment it successfully does anything. Set
+by consent, freshness and max-attempts; not by idempotency or state validity.
+
+**shadcn/ui was not installed.** The entire UI surface is a card, a badge, a stat,
+a bar and a table. Four hand-written components in the same visual idiom cost less
+than the component library's install and config, and the dashboard is one page
+with client-side tabs rather than three routes — a static export with no
+navigation cannot 404 on stage.
+
+**Two guardrail counts, not one.** The scoreboard reports both refusals and the
+distinct records held back. Over a dozen ticks the same deferral is re-evaluated
+repeatedly, so "cooldown: 95" and "cooldown: 17 records" are both true and only
+one of them is the number to quote. Conflating them would inflate exactly the
+figure this project argues against inflating.
+
+**Layer 2 has never run live.** There is no `ANTHROPIC_API_KEY` on the build
+machine. `llm_diagnoser.py` is built and unit-tested against a fake client, and
+`--no-llm` is a real code path with tests asserting the batch completes with the
+model down. Every number quoted in the README is therefore the floor with layer 2
+off: 38 of 120 records fall to `UNKNOWN` and go to a human instead of being
+guessed at. Say this out loud in the demo.
+
+---
+
 ## 13. Demo script (5 minutes)
 
 1. **The leak** (30s) — "This merchant has ₹5.8L in failed payments and dead carts.

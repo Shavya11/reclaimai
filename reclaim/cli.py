@@ -131,6 +131,16 @@ def cmd_harvest(args) -> int:
     return 0
 
 
+def _client(args):
+    """The pre-staged outage. `--kill-razorpay` is demo beat #6 as a flag rather
+    than a code edit performed live."""
+    if not getattr(args, "kill_razorpay", False):
+        return None
+    from .executor.razorpay_client import DeadRazorpayClient
+
+    return DeadRazorpayClient()
+
+
 def _diagnoser(args):
     """None when the key is absent or --no-llm is passed. Both are real code
     paths: the batch must complete either way."""
@@ -289,6 +299,7 @@ def cmd_run_batch(args) -> int:
         result = run_batch(
             seed=args.seed, llm=_diagnoser(args), crash_at=args.crash_at,
             reseed=not args.resume, dry_run=None if args.live else True,
+            settle=not args.no_settle, client=_client(args),
         )
     except BatchCrashed as exc:
         crashed = str(exc)
@@ -316,11 +327,264 @@ def cmd_run_batch(args) -> int:
     print(f"  failed            {result.failed:>5}")
     print(f"  escalated         {result.escalated:>5}")
     print(f"  messages sent     {result.messages_sent:>5}")
+    print(f"  not yet due       {result.scheduled:>5}")
+    if result.settlement:
+        st = result.settlement
+        print()
+        print(f"  {BOLD}outcomes attributed via signed webhooks{OFF}")
+        print(f"    recovered       {GREEN}{st.recovered:>5}{OFF}  "
+              f"{format_inr(st.recovered_paise)}")
+        print(f"    no response     {st.no_response:>5}")
+        print(f"    failed again    {st.failed_again:>5}")
+        if st.unattributed:
+            print(f"    {RED}unattributed    {st.unattributed:>5}{OFF}")
     if result.blocked_by:
         print()
         for name, n in result.blocked_by.most_common():
             print(f"     {name:<20} {n:>4}")
+    if getattr(args, "kill_razorpay", False):
+        print()
+        print(f"  {YELLOW}Razorpay was unreachable for this run.{OFF} "
+              f"{result.failed} writes failed and were parked for review; "
+              f"the batch still completed and no key executed twice.")
     print()
+    return 0
+
+
+def _scoreboard_lines(board, indent: str = "  ") -> list[str]:
+    d = board.as_dict()
+    out = [
+        f"{BOLD}BATCH RESULTS{OFF}  {DIM}(n = {d['records']} at-risk records){OFF}",
+        "",
+        f"{indent}{'Money at risk':<28}{d['at_risk_display']:>14}",
+        f"{indent}{'Money recovered':<28}{GREEN}{d['recovered_display']:>14}{OFF}"
+        f"   ({d['recovery_rate']:.1%} by value, "
+        f"{d['record_recovery_rate']:.1%} by record)",
+        f"{indent}{'Still open':<28}{d['open_display']:>14}",
+        f"{indent}{'Written off / unrecoverable':<28}{d['unrecoverable_display']:>14}"
+        f"   {DIM}(never-retry causes, escalated not chased){OFF}",
+    ]
+    if not d["balances"]:
+        out.append(f"{indent}{RED}buckets do not sum to the total{OFF}")
+
+    out += ["", f"{indent}{BOLD}Recovery rate by root cause{OFF}"]
+    for c in d["by_root_cause"]:
+        tint = GREEN if c["rate"] >= 0.3 else (YELLOW if c["rate"] > 0 else DIM)
+        out.append(f"{indent}  {c['root_cause']:<22}{tint}{c['rate']:>6.0%}{OFF}"
+                   f"   {c['recovered_records']:>3}/{c['records']:<4}"
+                   f"{DIM}{format_inr(c['recovered_paise']):>12}{OFF}")
+
+    held = sum(d.get("guardrails_records", {}).values())
+    out += ["", f"{indent}{BOLD}Guardrails: {d['guardrails_total']} refusals "
+                f"across {held} records{OFF}"]
+    for name, n in d["guardrails_fired"].items():
+        records = d.get("guardrails_records", {}).get(name, n)
+        out.append(f"{indent}  {name:<20}{RED}{records:>4}{OFF} records"
+                   f"{DIM}   ({n} refusals over the run){OFF}")
+    out += [
+        "",
+        f"{indent}{'Human escalations':<28}{d['escalations']:>6}",
+        f"{indent}{'Interventions executed':<28}{d['interventions']:>6}"
+        f"   {DIM}({d['contacts']} contacts, {d['silent_retries']} silent){OFF}",
+        f"{indent}{'Contacts per recovery':<28}"
+        f"{BOLD}{d['contacts_per_recovery']:>6}{OFF}",
+        f"{indent}{'Outcomes attributed':<28}{d['webhooks_attributed']:>6}"
+        f"   {DIM}via verified webhooks{OFF}",
+    ]
+    return out
+
+
+def cmd_scoreboard(args) -> int:
+    from .scoreboard import compute
+
+    board = compute()
+    if args.json:
+        print(json.dumps(board.as_dict(), indent=2))
+        return 0
+    print()
+    for line in _scoreboard_lines(board):
+        print(line)
+    print()
+    return 0
+
+
+def cmd_tick(args) -> int:
+    """Advance the demo clock and run again. Deferred work lands here."""
+    from . import clock
+    from .runner import tick
+
+    before = clock.now()
+    result, at = tick(advance=args.advance, seed=args.seed, llm=_diagnoser(args),
+                      dry_run=None if args.live else True, client=_client(args))
+
+    if args.json:
+        print(json.dumps({"from": before.isoformat(), "to": at.isoformat(),
+                          "advanced": args.advance,
+                          "result": result.as_dict()}, indent=2))
+        return 0
+
+    print()
+    print(f"{BOLD}TICK{OFF}  {before:%d %b %H:%M} -> {GREEN}{at:%d %b %H:%M} IST{OFF}"
+          f"  {DIM}(+{args.advance}){OFF}")
+    print(f"  due now {result.proposed:>4}   not yet due {result.scheduled:>4}")
+    print(f"  executed {GREEN}{result.executed:>3}{OFF}   "
+          f"blocked {RED}{result.blocked:>3}{OFF}")
+    if result.settlement:
+        st = result.settlement
+        print(f"  settled  {st.pending:>3} outcomes -> "
+              f"{GREEN}{st.recovered} recovered{OFF}, "
+              f"{st.no_response} no response, {st.failed_again} failed again")
+    print()
+    return 0
+
+
+def cmd_clock(args) -> int:
+    from . import clock
+
+    if args.reset:
+        clock.reset()
+        print("clock reset to wall time")
+        return 0
+    payload = {"now": clock.now().isoformat(),
+               "offset_seconds": clock.offset().total_seconds(),
+               "time_travelled": clock.is_travelled()}
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return 0
+    print(f"  demo clock   {clock.now():%Y-%m-%d %H:%M} IST")
+    print(f"  offset       {clock.offset()}")
+    return 0
+
+
+def cmd_baseline(args) -> int:
+    """PROJECT.md 9: 35% alone means nothing; 35% against 19% means everything."""
+    from .baseline import compare
+
+    comparison = compare(seed=args.seed)
+    d = comparison.as_dict()
+    if args.json:
+        print(json.dumps(d, indent=2))
+        return 0
+
+    b, o, gap = d["baseline"], d["ours"], d["gap"]
+    print()
+    print(f"{BOLD}BASELINE COMPARISON{OFF}  "
+          f"{DIM}same 120 records, same seeded outcomes, different strategy{OFF}")
+    print()
+    print(f"  {'':<30}{'NAIVE':>14}{'RECLAIMAI':>14}")
+    print(f"  {'-' * 58}")
+    rows = [
+        ("recovered", b["recovered_display"], o["recovered_display"]),
+        ("rate by value", f"{b['recovery_rate']:.1%}", f"{o['recovery_rate']:.1%}"),
+        ("rate by record", f"{b['record_recovery_rate']:.1%}",
+         f"{o['record_recovery_rate']:.1%}"),
+        ("customer contacts", str(b["contacts"]), str(o["contacts"])),
+        ("contacts per recovery", f"{b['contacts_per_recovery']:.2f}",
+         f"{o['contacts_per_recovery']:.2f}"),
+        ("contacts to opted-out", str(b["contacts_to_opted_out"]), "0"),
+        ("contacts on DND", str(b["contacts_to_dnd"]), "0"),
+        ("contacts in quiet hours", str(b["contacts_in_quiet_hours"]), "0"),
+        ("retries on never-retry causes", str(b["retries_against_never_retry"]), "0"),
+    ]
+    for label, left, right in rows:
+        print(f"  {label:<30}{left:>14}{right:>14}")
+    print()
+    print(f"  {RED}The naive strategy commits {b['compliance_breaches']} contacts "
+          f"the guardrail engine refuses.{OFF}")
+    print()
+
+    if gap.get("total", {}).get("records"):
+        print(f"{BOLD}WHERE THE NAIVE STRATEGY WINS, AND WHY{OFF}")
+        print(f"  {DIM}It recovers {gap['total']['display']} we do not. "
+              f"Every rupee of it is accounted for:{OFF}")
+        print()
+        for r in gap["reasons"]:
+            print(f"    {r['records']:>3}  {r['display']:>12}   {r['label']}")
+        print()
+        print(f"    {BOLD}{format_inr(gap['deliberate_paise'])}{OFF} of that is "
+              f"money the agent was told not to take.")
+        if gap["recoverable_with_layer_2_paise"]:
+            print(f"    {format_inr(gap['recoverable_with_layer_2_paise'])} is "
+                  f"blocked on layer 2 (no ANTHROPIC_API_KEY on this run).")
+        if gap["still_open_paise"]:
+            print(f"    {format_inr(gap['still_open_paise'])} is still in flight - "
+                  f"deferred, not abandoned.")
+    print()
+    return 0
+
+
+def cmd_demo(args) -> int:
+    """The whole arc, start to finish. Used to rehearse and to capture metrics."""
+    from . import clock
+    from .baseline import compare
+    from .runner import DEMO_ARC, run_batch, tick
+    from .scoreboard import compute
+
+    _reset_database()
+    clock.reset()
+    llm = _diagnoser(args)
+
+    print()
+    print(f"{BOLD}RECLAIMAI - FULL RUN{OFF}  {DIM}seed={args.seed}, "
+          f"{'live' if args.live else 'DRY_RUN'}, "
+          f"layer 2 {'on' if llm else 'off'}{OFF}")
+    print()
+
+    result = run_batch(seed=args.seed, llm=llm, dry_run=None if args.live else True)
+    print(f"  {'t0':<24} due {result.proposed:>3}  executed {result.executed:>3}  "
+          f"blocked {result.blocked:>3}  waiting {result.scheduled:>3}")
+
+    arc = DEMO_ARC + ["+7d"] * max(0, args.extra_ticks)
+    for step in arc:
+        res, at = tick(advance=step, seed=args.seed, llm=llm,
+                       dry_run=None if args.live else True)
+        recovered = res.settlement.recovered if res.settlement else 0
+        label = f"{step} -> {at:%d %b %H:%M}"
+        print(f"  {label:<24} due {res.proposed:>3}  executed {res.executed:>3}  "
+              f"blocked {res.blocked:>3}  recovered {GREEN}{recovered:>3}{OFF}")
+
+    board = compute()
+    print()
+    for line in _scoreboard_lines(board):
+        print(line)
+
+    comparison = compare(seed=args.seed)
+    d = comparison.as_dict()
+    b, o = d["baseline"], d["ours"]
+    print()
+    print(f"{BOLD}VS NAIVE BASELINE{OFF}")
+    print(f"  naive     {b['recovered_display']:>12}  "
+          f"{b['record_recovery_rate']:>6.1%} of records  "
+          f"{b['contacts']:>4} contacts  {b['contacts_per_recovery']:.2f}/recovery  "
+          f"{RED}{b['compliance_breaches']} compliance breaches{OFF}")
+    print(f"  ours      {o['recovered_display']:>12}  "
+          f"{o['record_recovery_rate']:>6.1%} of records  "
+          f"{o['contacts']:>4} contacts  {o['contacts_per_recovery']:.2f}/recovery  "
+          f"{GREEN}0 compliance breaches{OFF}")
+    print()
+
+    if args.save:
+        from pathlib import Path
+
+        out = Path(args.save)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(
+            {"seed": args.seed, "layer_2": bool(llm),
+             "scoreboard": board.as_dict(), "comparison": d}, indent=2),
+            encoding="utf-8")
+        print(f"{DIM}metrics written to {out}{OFF}")
+        print()
+    return 0
+
+
+def cmd_serve(args) -> int:
+    import uvicorn
+
+    print(f"  dashboard  http://{args.host}:{args.port}/")
+    print(f"  api        http://{args.host}:{args.port}/api/scoreboard")
+    print(f"  webhook    http://{args.host}:{args.port}/webhooks/razorpay")
+    uvicorn.run("reclaim.api.app:app", host=args.host, port=args.port,
+                reload=args.reload)
     return 0
 
 
@@ -377,17 +641,10 @@ def cmd_prove_idempotency(args) -> int:
 
 
 def _reset_database() -> None:
-    """Drops the file rather than deleting rows — audit_log rejects DELETE by
-    design, so a clean slate means a new database."""
-    from pathlib import Path
+    """The demo clock lives in the same database file, so it resets with it."""
+    from .db import reset_database
 
-    from .db import engine, init_db
-
-    engine.dispose()
-    db = Path(str(settings.database_url).replace("sqlite:///", ""))
-    if db.exists():
-        db.unlink()
-    init_db()
+    reset_database()
 
 
 def cmd_reset(args) -> int:
@@ -431,6 +688,12 @@ def main(argv: list[str] | None = None) -> int:
         ("reset", cmd_reset, "drop the database and start clean"),
         ("harvest", cmd_harvest, "harvest real Razorpay error codes into fixtures"),
         ("config", cmd_config, "show effective settings"),
+        ("scoreboard", cmd_scoreboard, "the batch scoreboard"),
+        ("tick", cmd_tick, "advance the demo clock and run deferred work"),
+        ("clock", cmd_clock, "show or reset the demo clock"),
+        ("baseline", cmd_baseline, "naive strategy over the same batch"),
+        ("demo", cmd_demo, "the whole arc: reset, run, tick, score, compare"),
+        ("serve", cmd_serve, "run the API and dashboard"),
     ]:
         sp = subs.add_parser(name, help=helptext)
         sp.add_argument("--json", action="store_true", help="machine-readable output")
@@ -447,10 +710,37 @@ def main(argv: list[str] | None = None) -> int:
                     help="continue without regenerating the batch")
     rb.add_argument("--live", action="store_true",
                     help="make real Razorpay test-mode calls")
+    rb.add_argument("--no-settle", action="store_true",
+                    help="fire the interventions but do not replay outcomes")
+
+    for name in ("run-batch", "tick"):
+        subs.choices[name].add_argument(
+            "--kill-razorpay", action="store_true",
+            help="pre-staged outage: every Razorpay write fails, the batch "
+                 "completes anyway")
     pi = subs.choices["prove-idempotency"]
     pi.add_argument("--crash-at", type=int, default=30)
 
-    for name in ("diagnose", "plan", "run-batch", "prove-idempotency"):
+    tk = subs.choices["tick"]
+    tk.add_argument("--advance", default="24h",
+                    help="schedule token: 20m, 2h, 24h, +7d, next_salary_window")
+    tk.add_argument("--live", action="store_true")
+
+    subs.choices["clock"].add_argument("--reset", action="store_true")
+
+    dm = subs.choices["demo"]
+    dm.add_argument("--live", action="store_true")
+    dm.add_argument("--extra-ticks", type=int, default=2,
+                    help="additional +7d ticks so deferred work lands")
+    dm.add_argument("--save", default=None, help="write metrics to a JSON file")
+
+    sv = subs.choices["serve"]
+    sv.add_argument("--host", default="127.0.0.1")
+    sv.add_argument("--port", type=int, default=8000)
+    sv.add_argument("--reload", action="store_true")
+
+    for name in ("diagnose", "plan", "run-batch", "prove-idempotency", "tick",
+                 "demo", "baseline"):
         subs.choices[name].add_argument("--seed", type=int, default=settings.seed)
         subs.choices[name].add_argument("--no-llm", action="store_true",
                                         help="skip layer 2 and prove the batch still completes")

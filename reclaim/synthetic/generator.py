@@ -14,6 +14,24 @@ from ..models import AtRiskRecord
 from ..timeutil import IST, now
 from . import error_codes as ec
 
+
+def batch_epoch(at=None):
+    """The anchor every timestamp in a batch is measured from: midnight IST of
+    the day the batch is generated.
+
+    Reading the wall clock directly would make amounts reproducible from the
+    seed while timestamps quietly were not — and timestamps decide which records
+    fall inside quiet hours and which hour bucket the cohort signal groups on.
+    The batch would then produce a slightly different compliance count every run,
+    which is exactly the kind of number a reader is entitled to reproduce.
+
+    Anchoring on the day keeps records genuinely recent and ageing naturally,
+    while holding every derived number still for as long as anyone is likely to
+    be looking at it.
+    """
+    at = at or now()
+    return at.replace(hour=0, minute=0, second=0, microsecond=0)
+
 # Sums to 120. Follows PROJECT.md §10, with small RISK_DECLINE and
 # MANDATE_REVOKED slices carved out so the five no_auto_action policy rows
 # actually have records to demonstrate.
@@ -78,7 +96,7 @@ class Batch:
         return sum(r.amount for r in self.records)
 
 
-def _make_customers(rng: random.Random) -> list[Customer]:
+def _make_customers(rng: random.Random, epoch) -> list[Customer]:
     out = []
     for i in range(N_CUSTOMERS):
         cid = f"CUST_{4000 + i}"
@@ -93,7 +111,7 @@ def _make_customers(rng: random.Random) -> list[Customer]:
                 on_dnd=False,
                 successful_payments_lifetime=rng.randint(1, 9) if has_history else 0,
                 last_successful_at=(
-                    now() - timedelta(days=rng.randint(20, 200)) if has_history else None
+                    epoch - timedelta(days=rng.randint(20, 200)) if has_history else None
                 ),
             )
         )
@@ -115,9 +133,10 @@ def _amount(rng: random.Random, high_value: bool) -> int:
     return max(199, int(round(base * rng.uniform(0.9, 1.25)))) * 100
 
 
-def generate(seed: int = 42, n: int = 120) -> Batch:
+def generate(seed: int = 42, n: int = 120, at=None) -> Batch:
+    epoch = batch_epoch(at)
     rng = random.Random(seed)
-    customers = _make_customers(rng)
+    customers = _make_customers(rng, epoch)
     by_id = {c.id: c for c in customers}
 
     causes: list[RootCause] = []
@@ -132,7 +151,7 @@ def generate(seed: int = 42, n: int = 120) -> Batch:
 
     # Bank-downtime records cluster on one issuer inside one hour. They carry the
     # generic "declined" error, so ONLY the cohort signal can identify them.
-    outage_start = now() - timedelta(hours=6)
+    outage_start = epoch - timedelta(hours=6)
     downtime_idx = [i for i, c in enumerate(causes) if c is RootCause.BANK_DOWNTIME]
     clustered = set(downtime_idx[:OUTAGE_COUNT])
 
@@ -151,8 +170,8 @@ def generate(seed: int = 42, n: int = 120) -> Batch:
             error = dict(rng.choice(ec.AMBIGUOUS))  # outage disguised as a decline
         else:
             issuer = rng.choice(ec.ISSUERS)
-            detected = now() - timedelta(hours=rng.randint(1, 72),
-                                         minutes=rng.randint(0, 59))
+            detected = epoch - timedelta(hours=rng.randint(1, 72),
+                                        minutes=rng.randint(0, 59))
             if leak is LeakType.ABANDONED_CART:
                 error = None  # no payment was ever attempted
             elif cause in AMBIGUOUS_CAUSES:

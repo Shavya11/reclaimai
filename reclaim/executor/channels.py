@@ -15,7 +15,7 @@ from datetime import datetime
 
 from ..config import settings
 from ..enums import Channel
-from ..timeutil import now
+from ..clock import now
 
 log = logging.getLogger(__name__)
 

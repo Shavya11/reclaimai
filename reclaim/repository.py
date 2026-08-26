@@ -58,6 +58,32 @@ def get_customer(customer_id: str) -> CustomerRow | None:
         return s.get(CustomerRow, customer_id)
 
 
+def last_attempt_at() -> dict[str, object]:
+    """When each record was last acted on. Attempt N+1's schedule counts from
+    attempt N, so a "+48h" follow-up means 48 hours after the first message
+    rather than 48 hours after whenever someone next runs the batch."""
+    from .db import InterventionRow
+
+    out: dict[str, object] = {}
+    with SessionLocal() as s:
+        rows = (s.query(InterventionRow.record_id, InterventionRow.executed_at)
+                .filter(InterventionRow.executed_at.isnot(None))
+                .order_by(InterventionRow.id).all())
+    for record_id, executed_at in rows:
+        out[record_id] = to_ist(executed_at)
+    return out
+
+
+def set_next_action_at(record_id: str, when) -> None:
+    """A record that is waiting has to say what it is waiting for. The UI reads
+    this column to render "deferred - retries 1 Sep, 11:00"."""
+    with SessionLocal() as s:
+        row = s.get(AtRiskRecordRow, record_id)
+        if row is not None:
+            row.next_action_at = when
+            s.commit()
+
+
 def count_records() -> int:
     with SessionLocal() as s:
         return s.query(AtRiskRecordRow).count()

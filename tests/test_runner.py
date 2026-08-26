@@ -5,25 +5,26 @@ about more than anything. It is not a claim that the agent cannot double-charge;
 it kills a batch mid-flight, restarts it, and counts the keys.
 """
 
-import pytest
-from sqlalchemy import delete, func
+from collections import Counter
 
-from reclaim import audit
+import pytest
+from sqlalchemy import func
+
+from reclaim import audit, clock
 from reclaim.db import (
-    ExecutedActionRow, HumanQueueRow, InterventionRow, SessionLocal, init_db,
+    ExecutedActionRow, HumanQueueRow, SessionLocal, reset_database,
 )
 from reclaim.enums import Stage
-from reclaim.runner import BatchCrashed, run_batch
+from reclaim.runner import BatchCrashed, run_batch, tick
 
 
 @pytest.fixture(autouse=True)
 def _clean_db():
-    init_db()
-    with SessionLocal() as s:
-        s.execute(delete(ExecutedActionRow))
-        s.execute(delete(InterventionRow))
-        s.execute(delete(HumanQueueRow))
-        s.commit()
+    """A whole new database per test. Wiping only the mutable tables leaves
+    records escalated and diagnoses already logged, so the run under test
+    silently becomes a resumed one and starts depending on test order."""
+    reset_database()
+    clock.reset()
 
 
 def _duplicate_keys() -> list[str]:
@@ -52,22 +53,59 @@ def test_a_crashed_batch_resumes_without_double_charging():
 
 def test_resume_blocks_replays_at_the_guardrail():
     """Defence in depth, layer one: guardrail #10 catches the replay before it
-    ever reaches Razorpay."""
+    ever reaches Razorpay, rather than letting the database constraint be the
+    only thing standing between a crash and a second charge."""
     with pytest.raises(BatchCrashed):
-        run_batch(dry_run=True, crash_at=30)
-    claimed = {k for (k,) in SessionLocal().query(ExecutedActionRow.idempotency_key)}
+        run_batch(dry_run=True, crash_at=30, settle=False)
+    with SessionLocal() as s:
+        claimed = {k for (k,) in s.query(ExecutedActionRow.idempotency_key)}
+    assert claimed
 
-    resumed = run_batch(dry_run=True, reseed=False)
-    assert resumed.blocked_by["idempotency"] == len(claimed)
+    resumed = run_batch(dry_run=True, reseed=False, settle=False)
+
+    # The resume is expected to execute the actions the crash never reached.
+    # What it must not do is re-execute the ones it did, and the guardrail is
+    # what stops that - the database constraint is the layer below.
+    assert resumed.blocked_by["idempotency"] > 0
+
+    with SessionLocal() as s:
+        rows = Counter(k for (k,) in s.query(ExecutedActionRow.idempotency_key))
+    assert set(claimed) <= set(rows), "a claimed key vanished on resume"
+    assert all(rows[k] == 1 for k in claimed), "a claimed key was claimed twice"
+    assert _duplicate_keys() == []
 
 
 def test_running_the_same_batch_twice_executes_nothing_new():
-    first = run_batch(dry_run=True)
-    second = run_batch(dry_run=True, reseed=False)
+    """A replay is a replay. settle=False freezes the world between the two
+    runs, so nothing has legitimately advanced and every action the second run
+    proposes is one the first already took."""
+    first = run_batch(dry_run=True, settle=False)
+    second = run_batch(dry_run=True, reseed=False, settle=False)
 
     assert first.executed > 0
     assert second.executed == 0
     assert _duplicate_keys() == []
+
+
+def test_a_settled_outcome_advances_the_ladder_rather_than_replaying():
+    """The other half of the same coin. Once outcomes come back, an unanswered
+    record is on attempt 2 — a different action with a different key, not a
+    replay of attempt 1. A system that cannot tell those apart either
+    double-charges or never follows up."""
+    first = run_batch(dry_run=True)
+    assert first.settlement is not None
+    assert first.settlement.no_response > 0, "nothing was left unanswered"
+
+    # The follow-up is scheduled hours or days out by policy, so it takes a
+    # tick to become due. That delay is the feature, not an obstacle.
+    second, _ = tick(advance="48h", dry_run=True)
+
+    assert second.executed > 0, "the follow-up rung never fired"
+    assert _duplicate_keys() == []
+
+    with SessionLocal() as s:
+        attempts = {n for (n,) in s.query(ExecutedActionRow.attempt_number).all()}
+    assert attempts > {1}, "every execution was still attempt 1"
 
 
 def test_no_key_ever_appears_twice_across_many_runs():
