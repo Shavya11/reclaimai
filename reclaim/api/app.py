@@ -41,7 +41,31 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     init_db()
+    if settings.seed_on_boot:
+        _seed_if_empty()
     yield
+
+
+def _seed_if_empty() -> None:
+    """Populate a cold deployment, once.
+
+    Guarded on the table being empty rather than on a flag alone: a restart must
+    not wipe a batch somebody is presently demonstrating, and on a host with a
+    persistent disk this becomes a no-op after the first boot. Failure here is
+    logged and swallowed — an API that will not start because it could not
+    generate demo data is worse than one serving zeroes.
+    """
+    from ..repository import count_records
+
+    try:
+        if count_records():
+            return
+        from ..runner import run_batch
+
+        log.info("empty database at boot — seeding one batch")
+        run_batch(dry_run=None)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("boot seed failed, serving an empty scoreboard: %s", exc)
 
 
 app = FastAPI(title="ReclaimAI", version="1.0", lifespan=_lifespan,

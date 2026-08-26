@@ -34,6 +34,12 @@ class Settings(BaseSettings):
 
     seed: int = 42
 
+    # A hosted container starts with an empty disk, and an empty disk serves an
+    # empty dashboard. On means: if the database has no records at boot, run the
+    # batch once so the deployment is never a blank page. Off is correct
+    # locally, where `cli demo` owns that decision.
+    seed_on_boot: bool = False
+
     @property
     def webhook_secret(self) -> str:
         """The secret webhook signatures are verified against.

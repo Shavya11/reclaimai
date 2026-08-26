@@ -1,0 +1,56 @@
+# Render blueprint. Point Render at this repo and it reads this file.
+#
+# The purpose of this deployment is a public URL Razorpay can POST a webhook to.
+# It is not where the demo should be driven from: free instances spin down after
+# ~15 minutes idle and cold-start in 30-50 seconds, which is a bad thing to
+# discover in front of judges. Run the demo locally; let this one receive.
+
+services:
+  - type: web
+    name: reclaimai
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+
+    # A free instance has an ephemeral disk, so the database is wiped on every
+    # restart and SEED_ON_BOOT rebuilds a batch. To keep data across restarts,
+    # move to a paid plan and uncomment the disk below — nothing else changes.
+    # disk:
+    #   name: reclaim-data
+    #   mountPath: /app/data
+    #   sizeGB: 1
+
+    envVars:
+      - key: SEED_ON_BOOT
+        value: "true"
+
+      # Keep DRY_RUN on unless you specifically want the hosted instance minting
+      # real test-mode payment links. Test mode moves no real money, but a
+      # public URL that can create payment links is still worth being deliberate
+      # about. Turn it off only for the live webhook proof.
+      - key: DRY_RUN
+        value: "true"
+
+      - key: AUTOPILOT_ENABLED
+        value: "true"
+
+      - key: DATABASE_URL
+        value: sqlite:////app/data/reclaim.db
+
+      - key: TIMEZONE
+        value: Asia/Kolkata
+
+      # sync: false means "prompt me, do not store it in git". Set these three in
+      # the Render dashboard. The webhook secret must match the one you type into
+      # the Razorpay webhook form character for character, or every delivery
+      # fails verification and is discarded — which is the correct behaviour and
+      # an infuriating way to spend an afternoon.
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false

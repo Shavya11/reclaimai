@@ -193,7 +193,26 @@ def _enable_foreign_keys(dbapi_conn, _record):
     dbapi_conn.execute("PRAGMA foreign_keys=ON")
 
 
+def _ensure_sqlite_dir() -> None:
+    """Create the database's parent directory if it is missing.
+
+    SQLite will not create one, and the error it raises instead is
+    `unable to open database file` with no mention of the path — which on a
+    fresh host, where the only difference from a working machine is a directory
+    nobody thought to create, is a genuinely awful way to spend an evening.
+    """
+    from pathlib import Path
+
+    url = str(settings.database_url)
+    if not url.startswith("sqlite:///"):
+        return
+    path = Path(url.replace("sqlite:////", "/").replace("sqlite:///", ""))
+    if path.parent and not path.parent.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+
 def init_db() -> None:
+    _ensure_sqlite_dir()
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
         for trigger in _APPEND_ONLY_TRIGGERS:
