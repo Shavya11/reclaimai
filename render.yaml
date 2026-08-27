@@ -81,3 +81,15 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
+
+      # Layer 2 runs on whichever of these is set, Anthropic first. Leave both
+      # blank and the batch still completes — the fallback chain sends the
+      # ambiguous records to a human instead. That is a supported mode, but the
+      # deployed scoreboard then reports ~₹91,046 recovered against the
+      # ₹1,22,347 in the README, because 38 records fall to UNKNOWN rather than
+      # 3. A reader comparing the two has no way to tell which is lying.
+      # Set GEMINI_API_KEY here to make the deployment match what is published.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash-lite

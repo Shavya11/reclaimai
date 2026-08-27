@@ -306,7 +306,11 @@ dashboard. [DEPLOY.md](DEPLOY.md) is the step-by-step.
 receiver at **https://reclaimai-api.onrender.com**.
 
 The deployed scoreboard reproduces the local one to the rupee — `₹1,22,347`
-recovered, 36.7% of records, 2.68 contacts per recovery — which is the seeded
+recovered, 36.7% of records, 2.68 contacts per recovery — **provided
+`GEMINI_API_KEY` is set on the API host**. Without it the deployment still runs,
+but layer 2 is off there and it reports `₹91,046` across 31 records, with 38 in
+`UNKNOWN` instead of 3. Same code, same seed, different diagnosis depth. The
+figure above is the seeded
 batch doing what it claims on a machine that has never seen this repo before.
 
 ```
