@@ -12,8 +12,7 @@ Read `PROJECT.md` first for the spec. This file is the schedule and the checklis
 
 ## Status
 
-- [ ] Day 1 — Foundation  (1.2 error-code harvest outstanding — blocked on paying
-      the 4 minted test links, then `cli harvest --collect`)
+- [x] Day 1 — Foundation
 - [x] Day 2 — Brain
 - [x] Day 3 — Hands
 - [x] Day 4 — Face + Proof
@@ -30,11 +29,17 @@ record/schema layer.
   - `pyproject.toml` / `requirements.txt`, `.env.example`, `.gitignore`
   - Package layout per PROJECT.md §3
   - `git init` + first commit
-- [ ] **1.2 Razorpay test account** (0.5h)
+- [x] **1.2 Razorpay test account** (0.5h)
   - Generate `rzp_test_` key id + secret → `.env` (NEVER commit)
   - Smoke test: create an order, fetch it back
   - Note the exact error-code strings test cards return — feed them into
     `DETERMINISTIC_MAP`
+  - Two reasons harvested live via `cli harvest --collect`. The rest were
+    verified against Razorpay's published error-reason list, which caught 16
+    map keys and 3 generator strings that Razorpay never emits — they could
+    never have matched in production. Automating the remaining scenarios is
+    not possible: Checkout runs Sardine + invisible hCaptcha + HumanSecurity
+    and refuses a headless browser.
 - [x] **1.3 Domain models** (1h)
   - `AtRiskRecord`, `LeakType`, `RecordState`, `RootCause`, `ActionType`, `Channel`
   - Pydantic models + SQLAlchemy tables

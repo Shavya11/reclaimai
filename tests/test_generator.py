@@ -6,6 +6,7 @@ from collections import Counter
 
 import pytest
 
+from reclaim.brain.diagnosis.deterministic import AMBIGUOUS_REASONS
 from reclaim.enums import LeakType, RootCause
 from reclaim.synthetic import BASE_SUCCESS, generate, probability
 from reclaim.enums import ActionType
@@ -102,8 +103,7 @@ def test_clustered_outage_records_look_like_plain_declines(batch):
                  if r.raw_signals["issuer_bank"] == "HDFC"
                  and batch.truth[r.id] is RootCause.BANK_DOWNTIME]
     for r in clustered:
-        assert r.raw_signals["error"]["reason"] in {"payment_failed",
-                                                    "payment_declined_by_bank"}
+        assert r.raw_signals["error"]["reason"] in AMBIGUOUS_REASONS
 
 
 def test_ambiguous_share_is_roughly_forty_percent(batch):
@@ -111,7 +111,7 @@ def test_ambiguous_share_is_roughly_forty_percent(batch):
     where the LLM earns its place."""
     amb = sum(1 for r in batch.records
               if (r.raw_signals.get("error") or {}).get("reason")
-              in {"payment_failed", "payment_declined_by_bank"})
+              in AMBIGUOUS_REASONS)
     assert 0.30 <= amb / len(batch.records) <= 0.50
 
 

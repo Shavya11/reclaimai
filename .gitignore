@@ -35,3 +35,5 @@ Thumbs.db
 user.env
 *.env
 !.env.example
+.render_key
+.deploy_secrets

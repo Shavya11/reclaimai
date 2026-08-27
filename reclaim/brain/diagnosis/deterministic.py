@@ -6,9 +6,9 @@ a silent miss, which is why `cli verify` checks this map against the fixture tha
 `cli harvest` writes rather than trusting it by eye.
 
 The deliberate omission is the generic decline family — payment_failed,
-payment_declined_by_bank. Those cover insufficient funds, a risk decline and a
-daily-limit breach at once, so resolving them here would be guessing. They fall
-through to layer 2 on purpose.
+payment_declined, card_declined. Those cover insufficient funds, a risk decline
+and a daily-limit breach at once, so resolving them here would be guessing. They
+fall through to layer 2 on purpose.
 """
 
 from ...enums import RootCause
@@ -17,32 +17,49 @@ from ...models import AtRiskRecord, Diagnosis
 DETERMINISTIC_MAP: dict[str, RootCause] = {
     # transient issuer / gateway problems
     "gateway_technical_error": RootCause.BANK_DOWNTIME,
-    "gateway_error": RootCause.BANK_DOWNTIME,
-    "bank_downtime": RootCause.BANK_DOWNTIME,
-    "issuer_down": RootCause.BANK_DOWNTIME,
+    "bank_not_available": RootCause.BANK_DOWNTIME,
+    "bank_technical_error": RootCause.BANK_DOWNTIME,
+    "bank_cutoff_in_progress": RootCause.BANK_DOWNTIME,
+    "payment_declined_due_to_high_traffic": RootCause.BANK_DOWNTIME,
     # the instrument itself is unusable
     "card_expired": RootCause.EXPIRED_INSTRUMENT,
-    "invalid_card_number": RootCause.INVALID_INSTRUMENT,
-    "invalid_card_expiry": RootCause.INVALID_INSTRUMENT,
     "incorrect_card_details": RootCause.INVALID_INSTRUMENT,
-    "invalid_cvv": RootCause.INVALID_INSTRUMENT,
+    "card_number_invalid": RootCause.INVALID_INSTRUMENT,
+    "incorrect_card_expiry_date": RootCause.INVALID_INSTRUMENT,
+    "incorrect_cvv": RootCause.INVALID_INSTRUMENT,
+    "incorrect_cardholder_name": RootCause.INVALID_INSTRUMENT,
+    "invalid_vpa": RootCause.INVALID_INSTRUMENT,
+    "bank_account_invalid": RootCause.INVALID_INSTRUMENT,
     # the customer walked away mid-authentication
-    "payment_delayed_by_user": RootCause.AUTH_DROPOFF,
     "payment_cancelled": RootCause.AUTH_DROPOFF,
     "payment_pending": RootCause.AUTH_DROPOFF,
-    "otp_incorrect_or_expired": RootCause.AUTH_DROPOFF,
-    "3ds_authentication_failed": RootCause.AUTH_DROPOFF,
+    "authentication_failed": RootCause.AUTH_DROPOFF,
+    "incorrect_otp": RootCause.AUTH_DROPOFF,
+    "otp_expired": RootCause.AUTH_DROPOFF,
+    "otp_attempts_exceeded": RootCause.AUTH_DROPOFF,
+    "payment_session_expired": RootCause.AUTH_DROPOFF,
+    "payment_collect_request_expired": RootCause.AUTH_DROPOFF,
     # merchant or network policy forbids it — a human decision, never a retry
     "international_transaction_not_allowed": RootCause.POLICY_BLOCK,
     "payment_method_not_enabled": RootCause.POLICY_BLOCK,
-    "card_not_supported": RootCause.POLICY_BLOCK,
-    # recurring mandates
-    "mandate_revoked": RootCause.MANDATE_REVOKED,
-    "mandate_cancelled": RootCause.MANDATE_REVOKED,
-    "subscription_cancelled": RootCause.MANDATE_REVOKED,
+    "bank_not_enabled": RootCause.POLICY_BLOCK,
+    "card_network_not_enabled": RootCause.POLICY_BLOCK,
+    "card_type_invalid": RootCause.POLICY_BLOCK,
+    "invalid_currency": RootCause.POLICY_BLOCK,
+    "user_not_registered_for_netbanking": RootCause.POLICY_BLOCK,
+    # recurring mandates. Razorpay reports *revocation* through the subscription
+    # entity's status, not through a payment error_reason — the reasons below are
+    # the mandate failures that do reach a payment.
+    "mandate_creation_failed": RootCause.MANDATE_REVOKED,
+    "mandate_creation_declined": RootCause.MANDATE_REVOKED,
+    "mandate_creation_expired": RootCause.MANDATE_REVOKED,
+    "mandate_creation_timeout": RootCause.MANDATE_REVOKED,
     # our side
     "server_error": RootCause.TECHNICAL_ERROR,
-    "invalid_request_error": RootCause.TECHNICAL_ERROR,
+    "invalid_request": RootCause.TECHNICAL_ERROR,
+    "invalid_order_id": RootCause.TECHNICAL_ERROR,
+    "invalid_amount": RootCause.TECHNICAL_ERROR,
+    "invalid_response_from_gateway": RootCause.TECHNICAL_ERROR,
 }
 
 CODE_FALLBACK: dict[str, RootCause] = {
@@ -52,7 +69,8 @@ CODE_FALLBACK: dict[str, RootCause] = {
 
 # Present in the data, deliberately absent from the map above.
 AMBIGUOUS_REASONS = frozenset({
-    "payment_failed", "payment_declined_by_bank", "declined_by_bank",
+    "payment_failed", "payment_declined", "card_declined", "debit_declined",
+    "authorisation_declined_by_psp",
 })
 
 

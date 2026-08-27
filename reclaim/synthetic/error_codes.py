@@ -20,12 +20,12 @@ SPECIFIC: dict[str, dict[str, str]] = {
         "description": "Your card has expired. Please use a different card.",
     },
     "INVALID_INSTRUMENT": {
-        "code": "BAD_REQUEST_ERROR", "reason": "invalid_card_number",
+        "code": "BAD_REQUEST_ERROR", "reason": "card_number_invalid",
         "source": "customer", "step": "payment_initiation",
         "description": "The card number entered is invalid.",
     },
     "AUTH_DROPOFF": {
-        "code": "BAD_REQUEST_ERROR", "reason": "payment_delayed_by_user",
+        "code": "BAD_REQUEST_ERROR", "reason": "authentication_failed",
         "source": "customer", "step": "payment_authentication",
         "description": "Payment was not completed on the bank's OTP page.",
     },
@@ -35,7 +35,7 @@ SPECIFIC: dict[str, dict[str, str]] = {
         "description": "International cards are not supported for this merchant.",
     },
     "MANDATE_REVOKED": {
-        "code": "BAD_REQUEST_ERROR", "reason": "mandate_revoked",
+        "code": "BAD_REQUEST_ERROR", "reason": "mandate_creation_failed",
         "source": "customer", "step": "payment_authorization",
         "description": "The auto-debit mandate has been cancelled by the customer.",
     },
@@ -60,7 +60,7 @@ AMBIGUOUS: list[dict[str, str]] = [
         "description": "The bank declined this transaction.",
     },
     {
-        "code": "BAD_REQUEST_ERROR", "reason": "payment_declined_by_bank",
+        "code": "BAD_REQUEST_ERROR", "reason": "payment_declined",
         "source": "bank", "step": "payment_authorization",
         "description": "Transaction declined. Please contact your bank.",
     },

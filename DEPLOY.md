@@ -1,17 +1,24 @@
 # DEPLOY — Render (API) + Vercel (dashboard)
 
-> **Status:** GitHub and Vercel are done. Render is not.
+> **Status: deployed.**
 >
-> | Piece | State |
+> | Piece | URL |
 > |---|---|
-> | GitHub | `github.com/Shavya11/reclaimai` (private), 10 commits |
-> | Vercel | **live** — https://reclaimai-eight.vercel.app |
-> |  | Use Vercel's own auto-assigned domain. A `.vercel.app` subdomain added by hand through the API gets served a "Vercel Security Checkpoint" that a real browser does not get past. |
-> | Render | **not deployed** — needs a browser signup, see step 1 |
+> | Dashboard | **https://reclaimai-eight.vercel.app** |
+> | API + webhook | **https://reclaimai-api.onrender.com** |
+> | Repo | `github.com/Shavya11/reclaimai` (private) |
 >
-> The dashboard loads and says so plainly — "Dashboard loaded. No API
-> connected." — because it has no API to call until Render is up. Step 1 and
-> step 2.5 below are all that is left.
+> The deployed scoreboard reproduces the local one exactly — `₹80,183`
+> recovered, 31.7% of records, 1.97 contacts per recovery. Same seed, different
+> machine, identical numbers.
+>
+> **Remaining:** point a Razorpay webhook at
+> `https://reclaimai-api.onrender.com/webhooks/razorpay` (step 3) and pay one
+> link (step 4). That is the last untested seam.
+>
+> Use Vercel's auto-assigned domain. A `.vercel.app` subdomain added by hand
+> through the API is served a "Vercel Security Checkpoint" that a real browser
+> does not get past.
 
 **Read this first: the point of deploying is the webhook, not the hosting.**
 
@@ -41,7 +48,7 @@ was verified absent from the push before it ran.
 
 ---
 
-## 1. Render — the API  (you, 15 min)
+## 1. Render — the API  ✅ DONE
 
 1. render.com → **New** → **Blueprint** → pick the repo. It reads
    [render.yaml](render.yaml) and creates a service called `reclaimai-api`.
@@ -58,8 +65,8 @@ was verified absent from the push before it ran.
 3. Deploy. When it's live, check it:
 
 ```bash
-curl https://<your-service>.onrender.com/api/health
-curl https://<your-service>.onrender.com/api/scoreboard
+curl https://reclaimai-api.onrender.com/api/health
+curl https://reclaimai-api.onrender.com/api/scoreboard
 ```
 
 `/api/health` should report `ok: true`. `/api/scoreboard` should show 120
@@ -72,7 +79,7 @@ render.yaml — nothing else changes.
 
 ---
 
-## 2. Vercel — the dashboard  ✅ DONE (except step 2.5)
+## 2. Vercel — the dashboard  ✅ DONE
 
 1. vercel.com → **Add New** → **Project** → same repo.
 2. **Set Root Directory to `ui`.** This is the one setting people miss, and
@@ -81,7 +88,7 @@ render.yaml — nothing else changes.
 3. Add an environment variable:
 
    ```
-   NEXT_PUBLIC_API_BASE = https://<your-service>.onrender.com
+   NEXT_PUBLIC_API_BASE = https://reclaimai-api.onrender.com
    ```
 
    No trailing slash.
@@ -103,13 +110,13 @@ Open the Vercel URL. You should see the scoreboard, populated.
 
 ---
 
-## 3. Razorpay — point the webhook at Render  (you, 10 min)
+## 3. Razorpay — point the webhook at Render  ⬅ YOU ARE HERE
 
 Razorpay Dashboard → **Settings → Webhooks → Add New Webhook**.
 
 | Field | Value |
 |---|---|
-| Webhook URL | `https://<your-service>.onrender.com/webhooks/razorpay` |
+| Webhook URL | `https://reclaimai-api.onrender.com/webhooks/razorpay` |
 | Secret | the exact `RAZORPAY_WEBHOOK_SECRET` from step 1 |
 | Active events | `payment.captured`, `payment.failed`, `payment_link.paid`, `order.paid`, `subscription.charged` |
 
@@ -127,7 +134,7 @@ The point of all of the above.
 
 ```bash
 # Turn off DRY_RUN on Render so the API mints real test-mode links, then:
-curl -X POST "https://<your-service>.onrender.com/api/run-batch"
+curl -X POST "https://reclaimai-api.onrender.com/api/run-batch"
 ```
 
 Open the dashboard, find any record in `AT_RISK` with a `SEND_LINK`
@@ -136,7 +143,7 @@ intervention, and pay its link in a browser with a Razorpay test card.
 Then:
 
 ```bash
-curl https://<your-service>.onrender.com/api/webhooks | head -40
+curl https://reclaimai-api.onrender.com/api/webhooks | head -40
 ```
 
 You want to see a `payment_link.paid` event with `"outcome": "PROCESSED"` and
@@ -156,7 +163,7 @@ Vercel URL exactly — check scheme, host, and no trailing slash. Confirm with:
 
 ```bash
 curl -si -H "Origin: https://<your-vercel-url>" \
-  https://<your-service>.onrender.com/api/health | grep -i access-control
+  https://reclaimai-api.onrender.com/api/health | grep -i access-control
 ```
 
 No `access-control-allow-origin` header means the browser will block it.

@@ -134,7 +134,7 @@ PASS  scoreboard balances
 PASS  every recovered rupee traces to an intervention
 PASS  baseline gap is fully accounted for
 PASS  dashboard is built and servable
-TODO  deterministic map matches harvested codes  (needs `cli harvest`)
+PASS  deterministic map matches harvested Razorpay codes
 ```
 
 ---
@@ -301,9 +301,12 @@ ui/                 Next.js dashboard, static-exported and served by FastAPI
 **Render** runs the API and the webhook receiver; **Vercel** serves the
 dashboard. [DEPLOY.md](DEPLOY.md) is the step-by-step.
 
-Dashboard: **https://reclaimai-eight.vercel.app** — live. It reports "no API
-connected" until the Render half is deployed, which is the honest state rather
-than an error: the front end has nothing to read from yet.
+**Live:** dashboard at **https://reclaimai-eight.vercel.app**, API and webhook
+receiver at **https://reclaimai-api.onrender.com**.
+
+The deployed scoreboard reproduces the local one to the rupee — `₹80,183`
+recovered, 31.7% of records, 1.97 contacts per recovery — which is the seeded
+batch doing what it claims on a machine that has never seen this repo before.
 
 ```
    Vercel  ──────────►  Render  ◄──────────  Razorpay
@@ -335,7 +338,10 @@ world, and are listed here rather than left for a judge to find:
 1. **Layer 2 has never made a real API call** (no `ANTHROPIC_API_KEY`).
 2. **No webhook has arrived from Razorpay** (no tunnel) — the receiver is driven
    by locally signed payloads through the same endpoint.
-3. **`DETERMINISTIC_MAP` still keys off Razorpay-shaped guesses** — four payment
-   links are minted and unpaid on the test account; `cli harvest --collect`
-   replaces the guesses with harvested codes, and `cli verify` reports that check
-   as `TODO` until it does.
+3. **Only two error reasons were harvested from live test-mode payments**
+   (`payment_cancelled`, `international_transaction_not_allowed`). The rest of
+   `DETERMINISTIC_MAP` is validated against Razorpay's published error-reason
+   list rather than observed on this account — every one of its 42 keys appears
+   in that list, but 40 of them have not been seen arrive here. Razorpay
+   Checkout fingerprints and blocks headless browsers, so the remaining
+   scenarios need a human at a real browser to harvest.
