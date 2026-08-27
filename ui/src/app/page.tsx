@@ -35,6 +35,9 @@ export default function Page() {
   const [openRecord, setOpenRecord] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // null = we have not heard back yet. Distinguishing that from `false` is the
+  // whole point: an API that never answered is not an API that said no.
+  const [connected, setConnected] = useState<boolean | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -49,8 +52,10 @@ export default function Page() {
       setQueue(q.items);
       setHealth(h);
       setError(null);
+      setConnected(true);
     } catch (e) {
       setError(String(e));
+      setConnected(false);
     }
   }, []);
 
@@ -160,28 +165,37 @@ export default function Page() {
                 `/api/kill-switch?enabled=${health?.autopilot_enabled ? "false" : "true"}`,
               )
             }
-            disabled={!!busy}
+            disabled={!!busy || !health}
             title="Guardrail #1 — blocks every action while off"
             className={`rounded border px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${
-              health?.autopilot_enabled
+              !health || health.autopilot_enabled
                 ? "border-red/40 bg-red/10 text-red hover:bg-red/20"
                 : "border-green/40 bg-green/10 text-green hover:bg-green/20"
             }`}
           >
-            {health?.autopilot_enabled ? "Kill switch" : "Re-arm"}
+            {!health || health.autopilot_enabled ? "Kill switch" : "Re-arm"}
           </button>
         </div>
       </div>
 
-      {error && (
+      {connected === false && <Disconnected />}
+
+      {/* An action that failed while the API is otherwise reachable — a tick
+          that 400d, say. Dropping this would make a failed button click look
+          exactly like a successful one. */}
+      {connected !== false && error && (
         <div className="mb-4 rounded border border-red/30 bg-red/10 px-3 py-2 text-xs text-red">
-          {error} — is the API running? <span className="num">reclaim serve</span>
+          {error}
         </div>
       )}
 
       {!board ? (
         <Card>
-          <Empty>Loading…</Empty>
+          <Empty>
+            {connected === false
+              ? "No data — the dashboard is not connected to an API."
+              : "Loading…"}
+          </Empty>
         </Card>
       ) : tab === "dashboard" ? (
         <Dashboard board={board} />
@@ -205,6 +219,32 @@ export default function Page() {
         verified webhooks and the attribution chain.
       </footer>
     </main>
+  );
+}
+
+function Disconnected() {
+  // This page is served by Vercel; the API lives somewhere else. Saying "run
+  // `reclaim serve`" on a public URL is advice for a machine the reader does
+  // not have, so name the address that was actually tried instead.
+  const base = process.env.NEXT_PUBLIC_API_BASE;
+  return (
+    <div className="mb-4 rounded border border-amber/30 bg-amber/10 px-4 py-3 text-xs">
+      <p className="font-medium text-amber">
+        Dashboard loaded. No API connected.
+      </p>
+      <p className="mt-1 text-muted">
+        This page is the front end only. It reads its numbers from the ReclaimAI
+        API, which is deployed separately and is not reachable at{" "}
+        <span className="num text-ink">{base || "this origin"}</span>.
+      </p>
+      <p className="mt-1.5 text-dim">
+        Running it locally?{" "}
+        <span className="num text-muted">python -m reclaim.cli demo</span> then{" "}
+        <span className="num text-muted">python -m reclaim.cli serve</span> — the
+        API serves this same dashboard on its own port, no separate front end
+        needed.
+      </p>
+    </div>
   );
 }
 

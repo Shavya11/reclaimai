@@ -301,6 +301,10 @@ ui/                 Next.js dashboard, static-exported and served by FastAPI
 **Render** runs the API and the webhook receiver; **Vercel** serves the
 dashboard. [DEPLOY.md](DEPLOY.md) is the step-by-step.
 
+Dashboard: **https://reclaimai-eight.vercel.app** — live. It reports "no API
+connected" until the Render half is deployed, which is the honest state rather
+than an error: the front end has nothing to read from yet.
+
 ```
    Vercel  ──────────►  Render  ◄──────────  Razorpay
   dashboard   /api/*      API        webhook   test mode

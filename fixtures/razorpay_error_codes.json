@@ -1,0 +1,25 @@
+{
+  "harvested_from": "razorpay test mode",
+  "total_payments": 3,
+  "failed_payments": 2,
+  "codes": {
+    "payment_cancelled": {
+      "code": "BAD_REQUEST_ERROR",
+      "reason": "payment_cancelled",
+      "source": "customer",
+      "step": "payment_authentication",
+      "description": "Your payment has been cancelled. Try again or complete the payment later.",
+      "method": "wallet",
+      "seen_on_payment": "pay_TTdOmdHuTfswKU"
+    },
+    "international_transaction_not_allowed": {
+      "code": "BAD_REQUEST_ERROR",
+      "reason": "international_transaction_not_allowed",
+      "source": "business",
+      "step": "payment_initiation",
+      "description": "Your payment could not be completed as this business accepts domestic (Indian) card payments only. Try another payment method.",
+      "method": "card",
+      "seen_on_payment": "pay_TTdMUDzqjN4CEw"
+    }
+  }
+}

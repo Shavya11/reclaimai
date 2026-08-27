@@ -5,11 +5,13 @@
 > | Piece | State |
 > |---|---|
 > | GitHub | `github.com/Shavya11/reclaimai` (private), 10 commits |
-> | Vercel | **live** — https://reclaimai-shavya.vercel.app |
+> | Vercel | **live** — https://reclaimai-eight.vercel.app |
+> |  | Use Vercel's own auto-assigned domain. A `.vercel.app` subdomain added by hand through the API gets served a "Vercel Security Checkpoint" that a real browser does not get past. |
 > | Render | **not deployed** — needs a browser signup, see step 1 |
 >
-> The dashboard loads but shows a red banner: it has no API to call until Render
-> is up. Step 1 and step 2.5 below are all that is left.
+> The dashboard loads and says so plainly — "Dashboard loaded. No API
+> connected." — because it has no API to call until Render is up. Step 1 and
+> step 2.5 below are all that is left.
 
 **Read this first: the point of deploying is the webhook, not the hosting.**
 
