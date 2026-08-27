@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
 
+    # Layer 2's other provider. Either key alone is enough; Anthropic wins when
+    # both are set, because that is what PROJECT.md describes.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.7-flash"
+
     autopilot_enabled: bool = True
 
     # Defaults to True so a clone with no credentials never makes a live call.
@@ -76,6 +81,14 @@ class Settings(BaseSettings):
     @property
     def has_anthropic(self) -> bool:
         return bool(self.anthropic_api_key)
+
+    @property
+    def has_gemini(self) -> bool:
+        return bool(self.gemini_api_key)
+
+    @property
+    def has_llm(self) -> bool:
+        return self.has_anthropic or self.has_gemini
 
 
 settings = Settings()

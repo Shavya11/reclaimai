@@ -47,25 +47,44 @@ async def _lifespan(_app: FastAPI):
 
 
 def _seed_if_empty() -> None:
-    """Populate a cold deployment, once.
+    """Populate a cold deployment, once, in the background.
 
     Guarded on the table being empty rather than on a flag alone: a restart must
     not wipe a batch somebody is presently demonstrating, and on a host with a
-    persistent disk this becomes a no-op after the first boot. Failure here is
-    logged and swallowed — an API that will not start because it could not
-    generate demo data is worse than one serving zeroes.
+    persistent disk this becomes a no-op after the first boot. Failure is logged
+    and swallowed — an API that will not start because it could not generate
+    demo data is worse than one serving zeroes.
+
+    It walks the WHOLE demo arc, not just the first batch. A single batch only
+    fires the actions that are due immediately, which lands the scoreboard at
+    roughly 24% recovered while every number published about this project says
+    31.7%. A reader opening the deployed link and finding figures that disagree
+    with the README has no way to tell which one is lying, and is right not to
+    trust either.
+
+    On a thread, because the arc takes ~25 seconds and a health check that has
+    to wait that long is a deploy that gets marked failed. The scoreboard fills
+    in as the ticks land; the API answers from the first moment.
     """
+    import threading
+
     from ..repository import count_records
 
-    try:
-        if count_records():
-            return
-        from ..runner import run_batch
+    def work() -> None:
+        try:
+            if count_records():
+                return
+            from ..runner import DEMO_ARC, run_batch, tick
 
-        log.info("empty database at boot — seeding one batch")
-        run_batch(dry_run=None)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("boot seed failed, serving an empty scoreboard: %s", exc)
+            log.info("empty database at boot — seeding and walking the demo arc")
+            run_batch(dry_run=None)
+            for step in DEMO_ARC + ["+7d"] * 3:
+                tick(advance=step, dry_run=None)
+            log.info("boot seed complete")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("boot seed failed, serving an empty scoreboard: %s", exc)
+
+    threading.Thread(target=work, name="boot-seed", daemon=True).start()
 
 
 app = FastAPI(title="ReclaimAI", version="1.0", lifespan=_lifespan,
@@ -127,6 +146,7 @@ def health() -> dict[str, Any]:
         "autopilot_enabled": settings.autopilot_enabled,
         "razorpay_credentials": settings.has_razorpay,
         "anthropic_credentials": settings.has_anthropic,
+        "gemini_credentials": settings.has_gemini,
         "model": settings.anthropic_model,
         "clock": clock.now().isoformat(),
         "time_travelled": clock.is_travelled(),
@@ -394,7 +414,7 @@ def diagnosis_accuracy(seed: int = Query(default=None)) -> dict[str, Any]:
     return {"accuracy": report.as_dict(),
             "cohort_counterfactual": cohort_counterfactual(
                 batch.records, signals, batch.truth),
-            "layer_2_available": settings.has_anthropic}
+            "layer_2_available": settings.has_llm}
 
 
 # --- the three write endpoints the demo drives -------------------------------
@@ -446,12 +466,16 @@ def clock_reset() -> dict[str, Any]:
 def _llm():
     """None when there is no key. The batch completes either way — that is the
     fallback chain doing its job, not a degraded mode to apologise for."""
-    if not settings.has_anthropic:
-        return None
     from ..brain.diagnosis.llm_diagnoser import LLMDiagnoser
 
     llm = LLMDiagnoser()
-    return llm if llm.available else None
+    if llm.available:
+        return llm
+
+    from ..brain.diagnosis.gemini_diagnoser import GeminiDiagnoser
+
+    gem = GeminiDiagnoser()
+    return gem if gem.available else None
 
 
 # --- the dashboard ------------------------------------------------------------

@@ -142,14 +142,23 @@ def _client(args):
 
 
 def _diagnoser(args):
-    """None when the key is absent or --no-llm is passed. Both are real code
-    paths: the batch must complete either way."""
+    """None when no key is present or --no-llm is passed. Both are real code
+    paths: the batch must complete either way.
+
+    Anthropic first when both keys exist — PROJECT.md describes that one, and a
+    demo should run what the document claims."""
     if getattr(args, "no_llm", False):
         return None
     from .brain.diagnosis.llm_diagnoser import LLMDiagnoser
 
     llm = LLMDiagnoser()
-    return llm if llm.available else None
+    if llm.available:
+        return llm
+
+    from .brain.diagnosis.gemini_diagnoser import GeminiDiagnoser
+
+    gem = GeminiDiagnoser()
+    return gem if gem.available else None
 
 
 def cmd_diagnose(args) -> int:
@@ -202,8 +211,8 @@ def cmd_diagnose(args) -> int:
               f"({llm.model}){OFF}")
     elif not getattr(args, "no_llm", False):
         print()
-        print(f"  {DIM}no ANTHROPIC_API_KEY — layer 2 skipped, batch still "
-              f"completed{OFF}")
+        print(f"  {DIM}no ANTHROPIC_API_KEY or GEMINI_API_KEY — layer 2 "
+              f"skipped, batch still completed{OFF}")
     print()
     return 0
 
@@ -505,7 +514,7 @@ def cmd_baseline(args) -> int:
               f"money the agent was told not to take.")
         if gap["recoverable_with_layer_2_paise"]:
             print(f"    {format_inr(gap['recoverable_with_layer_2_paise'])} is "
-                  f"blocked on layer 2 (no ANTHROPIC_API_KEY on this run).")
+                  f"blocked on layer 2 (no LLM key on this run).")
         if gap["still_open_paise"]:
             print(f"    {format_inr(gap['still_open_paise'])} is still in flight - "
                   f"deferred, not abandoned.")
@@ -659,7 +668,9 @@ def cmd_config(args) -> int:
         "autopilot_enabled": settings.autopilot_enabled,
         "razorpay_credentials": settings.has_razorpay,
         "anthropic_credentials": settings.has_anthropic,
-        "model": settings.anthropic_model,
+        "gemini_credentials": settings.has_gemini,
+        "model": settings.anthropic_model if settings.has_anthropic
+                 else settings.gemini_model,
         "database": settings.database_url,
     }
     if args.json:

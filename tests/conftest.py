@@ -29,6 +29,13 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB.as_posix()}"
 os.environ.setdefault("DRY_RUN", "true")
 os.environ.setdefault("AUTOPILOT_ENABLED", "true")
 
+# Layer 2 is tested against fake clients, never a live one. Without this, adding
+# a real key to .env silently turns the suite into something that calls a paid
+# API a few hundred times, takes minutes, and fails on someone else's rate
+# limit. Not setdefault: an inherited key must be overridden, not respected.
+os.environ["ANTHROPIC_API_KEY"] = ""
+os.environ["GEMINI_API_KEY"] = ""
+
 
 def pytest_report_header(config):
     return f"reclaim test database: {_TEST_DB}"

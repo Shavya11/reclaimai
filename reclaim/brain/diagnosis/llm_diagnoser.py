@@ -99,19 +99,24 @@ Rules, in order of precedence:
 You are producing a label only. You do not decide what happens next."""
 
 
-class LLMDiagnoser:
-    def __init__(self, client=None, model: str | None = None) -> None:
-        self.model = model or settings.anthropic_model
+class CachedDiagnoser:
+    """Everything about layer 2 that is not the provider.
+
+    Which vendor answers is a deployment detail; the caching, the concurrency
+    cap and the never-raise fallback are properties of layer 2 itself. They live
+    here once so a second provider cannot quietly drift from the first.
+
+    Subclasses supply a client and `_ask`. Nothing else.
+    """
+
+    def __init__(self, client=None, model: str = "") -> None:
+        self.model = model
         self._semaphore = threading.Semaphore(MAX_CONCURRENCY)
         self._cache: dict[str, Diagnosis] = {}
         self._lock = threading.Lock()
         self.calls = 0
         self.cache_hits = 0
         self._client = client
-        if self._client is None and settings.has_anthropic:
-            import anthropic
-
-            self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
     @property
     def available(self) -> bool:
@@ -143,6 +148,18 @@ class LLMDiagnoser:
             with self._lock:
                 self._cache[key] = diagnosis
         return diagnosis
+
+    def _ask(self, record, signal) -> Diagnosis | None:
+        raise NotImplementedError
+
+
+class LLMDiagnoser(CachedDiagnoser):
+    def __init__(self, client=None, model: str | None = None) -> None:
+        super().__init__(client, model or settings.anthropic_model)
+        if self._client is None and settings.has_anthropic:
+            import anthropic
+
+            self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
     def _ask(self, record, signal) -> Diagnosis | None:
         self.calls += 1

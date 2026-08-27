@@ -152,8 +152,11 @@ Razorpay's generic `BAD_REQUEST_ERROR / payment_failed / "declined by the bank"`
 insufficient funds, card blocked, risk decline, and daily-limit — four causes needing four
 different responses. That is where the model earns its place.
 
-**Model:** `claude-sonnet-5`
-**Method:** forced tool use for structured output.
+**Model:** `claude-sonnet-5`, or `gemini-3.7-flash` when only a Gemini key is
+present. Whichever answers, the contract above it is identical: a label from a
+closed enum and a confidence, never an action.
+**Method:** forced tool use for structured output — `tool_choice` on Anthropic,
+`function_calling_config` mode `ANY` on Gemini.
 
 ```python
 DIAGNOSIS_TOOL = {
@@ -470,7 +473,9 @@ recovery makes judges suspicious; 35% with a clear unrecoverable list makes you 
 
 **Backend** — Python 3.11+ / FastAPI
 - `razorpay` official SDK
-- `anthropic` SDK → `claude-sonnet-5`
+- `anthropic` SDK → `claude-sonnet-5`, or `google-genai` → `gemini-3.7-flash`
+  (free tier). Layer 2 is one `Callable[[AtRiskRecord, CohortSignal | None],
+  Diagnosis | None]`, so the provider is a config value, not an architecture.
 - SQLite (zero setup) via SQLAlchemy
 - APScheduler for the retry queue (plus a manual `/tick` endpoint for demo control)
 - Pydantic for all boundary validation
