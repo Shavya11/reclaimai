@@ -1,52 +1,160 @@
 @import "tailwindcss";
 
-/* A dark operations console rather than a marketing page. This gets projected
-   in a room with the lights on: high contrast, dense type, and colour used only
-   where it carries meaning — green for money recovered, red for an action
-   refused, amber for one waiting. Nothing is decorative. */
+/* ReclaimAI design system.
+   ------------------------------------------------------------------------
+   A warm, light operations dashboard: cream canvas, white cards on generous
+   radii, one deep-green accent that only ever means "money recovered".
+
+   Colour is never decorative. Green is recovered, amber is still in flight,
+   red is refused or written off. Everything else is ink, muted or line.
+
+   The token *names* are the same ones the three screens already used, so the
+   queue and the audit trail inherit this palette without being rewritten.
+   The old dark console survives as the dark theme — the demo still reads on a
+   projector, it just is not the only thing it reads on. */
 
 :root {
-  --bg: #0b0d10;
+  --canvas: #f1f0eb;
+  --panel: #ffffff;
+  --panel-2: #f7f6f2;
+  --line: #e4e3dd;
+  --line-strong: #d3d2ca;
+
+  --ink: #10151c;
+  --muted: #4a5568;
+  --dim: #5e6a78;
+
+  --green: #14764f;
+  --green-deep: #0d4a33;
+  --green-mid: #2e9b69;
+  --green-soft: #bfe3d0;
+  --green-wash: #eaf5ef;
+  --on-deep: #eef7f2;
+
+  --red: #b4231f;
+  --red-wash: #fdeceb;
+  --amber: #a05a06;
+  --amber-wash: #fdf2e2;
+  --blue: #1d4ed8;
+  --violet: #6d28d9;
+
+  --focus: #14764f;
+  --shadow-card: 0 1px 2px rgba(16, 21, 28, 0.04);
+  --shadow-lift: 0 6px 20px -8px rgba(16, 21, 28, 0.16);
+}
+
+/* System-default dark. Guarded so an explicit light choice still wins. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: #0b0d10;
+    --panel: #14181d;
+    --panel-2: #191e25;
+    --line: #262d36;
+    --line-strong: #35404c;
+
+    --ink: #e8edf3;
+    --muted: #a4b0be;
+    --dim: #8b97a6;
+
+    --green: #34d399;
+    --green-deep: #0c3d2b;
+    --green-mid: #10b981;
+    --green-soft: #17553d;
+    --green-wash: #10241c;
+    --on-deep: #d7f0e4;
+
+    --red: #f87171;
+    --red-wash: #2a1516;
+    --amber: #fbbf24;
+    --amber-wash: #2a2113;
+    --blue: #60a5fa;
+    --violet: #a78bfa;
+
+    --focus: #34d399;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-lift: 0 6px 20px -8px rgba(0, 0, 0, 0.6);
+  }
+}
+
+/* Explicit choice wins in both directions. */
+:root[data-theme="dark"] {
+  --canvas: #0b0d10;
   --panel: #14181d;
   --panel-2: #191e25;
   --line: #262d36;
+  --line-strong: #35404c;
+
   --ink: #e8edf3;
-  --muted: #8b97a6;
-  --dim: #5d6875;
+  --muted: #a4b0be;
+  --dim: #8b97a6;
+
   --green: #34d399;
-  --green-dim: #10603f;
+  --green-deep: #0c3d2b;
+  --green-mid: #10b981;
+  --green-soft: #17553d;
+  --green-wash: #10241c;
+  --on-deep: #d7f0e4;
+
   --red: #f87171;
-  --red-dim: #6b2020;
+  --red-wash: #2a1516;
   --amber: #fbbf24;
+  --amber-wash: #2a2113;
   --blue: #60a5fa;
   --violet: #a78bfa;
+
+  --focus: #34d399;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lift: 0 6px 20px -8px rgba(0, 0, 0, 0.6);
 }
 
 @theme inline {
-  --color-bg: var(--bg);
+  --color-canvas: var(--canvas);
   --color-panel: var(--panel);
   --color-panel2: var(--panel-2);
   --color-line: var(--line);
+  --color-linestrong: var(--line-strong);
   --color-ink: var(--ink);
   --color-muted: var(--muted);
   --color-dim: var(--dim);
   --color-green: var(--green);
+  --color-greendeep: var(--green-deep);
+  --color-greenmid: var(--green-mid);
+  --color-greensoft: var(--green-soft);
+  --color-greenwash: var(--green-wash);
+  --color-ondeep: var(--on-deep);
   --color-red: var(--red);
+  --color-redwash: var(--red-wash);
   --color-amber: var(--amber);
+  --color-amberwash: var(--amber-wash);
   --color-blue: var(--blue);
   --color-violet: var(--violet);
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  --font-sans: var(--font-display), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, sans-serif;
+  --font-mono: var(--font-numeric), ui-monospace, "SF Mono", "Cascadia Mono",
+    Menlo, Consolas, monospace;
 }
 
+/* Bg is set explicitly rather than inherited — nothing behind this page is
+   guaranteed to be the colour we think it is. */
 html,
 body {
-  background: var(--bg);
+  background: var(--canvas);
   color: var(--ink);
 }
 
 body {
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
   font-feature-settings: "tnum" 1; /* money in a column should line up */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Every interactive element gets a ring, including ones a mouse never
+   reaches. Tab order follows the DOM, which follows the visual order. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 ::-webkit-scrollbar {
@@ -54,14 +162,73 @@ body {
   height: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--line);
+  background: var(--line-strong);
   border-radius: 6px;
 }
 
 .num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* Only for text that sits on --green-deep, where the normal ink is invisible. */
+.on-deep {
+  color: var(--on-deep);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: rise 260ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--panel-2);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--line) 60%, transparent),
+    transparent
+  );
+  animation: shimmer 1.4s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .skeleton::after {
+    display: none;
+  }
 }

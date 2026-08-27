@@ -17,7 +17,7 @@ import {
   fmtTime,
   get,
 } from "@/lib/api";
-import { Badge, Card, Empty, STAGE_TONE, STATE_TONE } from "@/components/ui";
+import { Badge, Button, Card, Empty, STAGE_TONE, STATE_TONE } from "@/components/ui";
 
 const STAGE_TITLE: Record<string, string> = {
   DETECT: "Detected",
@@ -67,12 +67,9 @@ export default function AuditTrail({
         title={`Record ${detail.id}`}
         hint={`${detail.leak_type} · ${detail.counterparty_id} · detected ${fmtTime(detail.detected_at)}`}
         right={
-          <button
-            onClick={onBack}
-            className="rounded border border-line bg-panel2 px-2 py-1 text-xs text-muted hover:text-ink"
-          >
-            ← back to queue
-          </button>
+          <Button variant="secondary" onClick={onBack}>
+            ← Back to queue
+          </Button>
         }
       >
         <div className="grid gap-4 md:grid-cols-4">
@@ -95,7 +92,7 @@ export default function AuditTrail({
         </div>
 
         <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <div className="rounded border border-line bg-panel2 p-3">
+          <div className="rounded-2xl border border-line bg-panel2 p-4">
             <Label>Signals the diagnosis saw</Label>
             <dl className="mt-2 space-y-1 text-xs">
               <Sig k="issuer" v={String(signals.issuer_bank ?? "—")} />
@@ -131,7 +128,7 @@ export default function AuditTrail({
             </dl>
           </div>
 
-          <div className="rounded border border-line bg-panel2 p-3">
+          <div className="rounded-2xl border border-line bg-panel2 p-4">
             <Label>Interventions</Label>
             {detail.interventions.length === 0 ? (
               <p className="mt-2 text-xs text-dim">
@@ -169,11 +166,11 @@ export default function AuditTrail({
 
       <Card
         title="Decision trail"
-        hint="Append-only. Every row was written at the moment the decision was taken, including the ones that refused."
+        hint="Detected → diagnosed → decided → guardrail → executed → outcome. Each row carries the reason recorded at the time, not one reconstructed afterwards."
       >
         <ol className="relative space-y-0">
           {events.map((e, idx) => (
-            <li key={e.id} className="relative flex gap-3 pb-4 last:pb-0">
+            <li key={e.id} className="relative flex gap-3.5 pb-5 last:pb-0">
               <div className="flex flex-col items-center">
                 <span
                   className={`mt-1 h-2 w-2 shrink-0 rounded-full ${

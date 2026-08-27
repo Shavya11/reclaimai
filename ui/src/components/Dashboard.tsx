@@ -4,18 +4,30 @@
 //
 // Four numbers at the top, because a judge should be able to read the outcome
 // from across the room. Everything under them exists to make those four
-// numbers believable: what was recovered per cause, what the agent refused to
-// do, and what a naive strategy would have done with the same batch.
+// numbers believable, and everything under them is now a picture rather than a
+// column of figures: where the detected money sits, which causes the diagnosis
+// actually recovers, what the agent refused to do, and how a naive strategy
+// compares on the same batch.
+//
+// The one rule the layout enforces: the charts show *shape*, and every chart
+// carries a "view as table" for the exact numbers. Neither pretends to be the
+// other.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { Comparison, Scoreboard, get, pct } from "@/lib/api";
+import { Badge, Card, Empty, Skeleton, Stat } from "@/components/ui";
 import {
-  Comparison,
-  Scoreboard,
-  get,
-  pct,
-} from "@/lib/api";
-import { Badge, Bar, Card, Empty, Stat } from "@/components/ui";
+  CauseChart,
+  CauseDatum,
+  ChartNote,
+  ChartTable,
+  MoneySplit,
+  PairRow,
+  PairedBars,
+  RailBar,
+  ResolutionGauge,
+} from "@/components/charts";
 
 const GUARDRAIL_BLURB: Record<string, string> = {
   kill_switch: "autopilot off",
@@ -33,139 +45,405 @@ const GUARDRAIL_BLURB: Record<string, string> = {
   freshness: "older than 90 days",
 };
 
-export default function Dashboard({ board }: { board: Scoreboard }) {
+// The registered set is fixed and lives one file per rule in the backend. The
+// denominator below is that same list — if a rule is added there without a
+// line here, the count is wrong, which is the loudest way to notice.
+const REGISTERED = Object.keys(GUARDRAIL_BLURB).length;
+
+const inr = (paise: number) =>
+  (paise / 100).toLocaleString("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  });
+
+const inrShort = (paise: number) => {
+  const r = paise / 100;
+  if (r >= 1e7) return `₹${(r / 1e7).toFixed(2)}Cr`;
+  if (r >= 1e5) return `₹${(r / 1e5).toFixed(2)}L`;
+  if (r >= 1e3) return `₹${(r / 1e3).toFixed(1)}K`;
+  return `₹${r.toFixed(0)}`;
+};
+
+export default function Dashboard({
+  board,
+  onDrill,
+}: {
+  board: Scoreboard;
+  onDrill?: (filter: string) => void;
+}) {
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    let live = true;
     get<Comparison>("/api/baseline")
-      .then(setComparison)
-      .catch(() => setFailed(true));
+      .then((c) => live && setComparison(c))
+      .catch(() => live && setFailed(true));
+    return () => {
+      live = false;
+    };
   }, [board.recovered_paise]);
 
-  const causes = board.by_root_cause.filter((c) => c.records > 0);
+  const causes: CauseDatum[] = useMemo(
+    () =>
+      board.by_root_cause
+        .filter((c) => c.records > 0)
+        .sort((a, b) => b.records - a.records)
+        .map((c) => ({
+          cause: c.root_cause,
+          records: c.records,
+          recovered: c.recovered_records,
+          rate: c.rate,
+          recoveredPaise: c.recovered_paise,
+          contacts: c.contacts,
+        })),
+    [board.by_root_cause],
+  );
+
   // Records held back, not raw refusals. A deferral re-evaluated on twelve
   // ticks is one decision, and quoting 95 where the honest number is 17 is the
   // kind of inflation this whole project is arguing against.
-  const fired = Object.entries(board.guardrails_fired).map(
-    ([name, refusals]) =>
-      [name, board.guardrails_records?.[name] ?? refusals, refusals] as const,
+  const held = useMemo(
+    () =>
+      Object.entries(board.guardrails_fired)
+        .map(
+          ([name, refusals]) =>
+            [name, board.guardrails_records?.[name] ?? refusals, refusals] as const,
+        )
+        .sort((a, b) => b[1] - a[1]),
+    [board.guardrails_fired, board.guardrails_records],
   );
-  const maxFired = Math.max(1, ...fired.map(([, held]) => held));
+  const heldTotal = held.reduce((n, [, h]) => n + h, 0);
+  const maxHeld = Math.max(1, ...held.map(([, h]) => h));
+
+  const pairs: PairRow[] | null = useMemo(() => {
+    if (!comparison) return null;
+    const b = comparison.baseline;
+    return [
+      {
+        label: "Money recovered",
+        naive: b.recovered_paise,
+        ours: board.recovered_paise,
+        naiveText: inrShort(b.recovered_paise),
+        oursText: inrShort(board.recovered_paise),
+        lowerIsBetter: false,
+        note: "naive collects more",
+      },
+      {
+        label: "Records recovered",
+        naive: b.records_recovered,
+        ours: board.records_recovered,
+        naiveText: String(b.records_recovered),
+        oursText: String(board.records_recovered),
+        lowerIsBetter: false,
+      },
+      {
+        label: "Customer contacts spent",
+        naive: b.contacts,
+        ours: board.contacts,
+        naiveText: String(b.contacts),
+        oursText: String(board.contacts),
+        lowerIsBetter: true,
+        note: "lower is better",
+      },
+      {
+        label: "Contacts per recovery",
+        naive: b.contacts_per_recovery,
+        ours: board.contacts_per_recovery,
+        naiveText: b.contacts_per_recovery.toFixed(2),
+        oursText: board.contacts_per_recovery.toFixed(2),
+        lowerIsBetter: true,
+      },
+    ];
+  }, [comparison, board]);
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+      {/* --- the four numbers ------------------------------------------- */}
+      <div className="md:col-span-6 xl:col-span-3">
         <Stat
           label="Money at risk"
           value={board.at_risk_display}
-          sub={`${board.records} records detected`}
+          accent
+          sub={`${board.records} records detected across failed payments, abandoned carts and failed mandates`}
+          onOpen={onDrill && (() => onDrill("all"))}
+          openLabel="Open every detected record"
         />
+      </div>
+      <div className="md:col-span-6 xl:col-span-3">
         <Stat
           label="Recovered"
           value={board.recovered_display}
           tone="green"
-          sub={`${pct(board.recovery_rate)} by value · ${board.records_recovered} records`}
+          sub={`${pct(board.recovery_rate)} by value · ${board.records_recovered} records · ${board.webhooks_attributed} attributed by webhook`}
+          onOpen={onDrill && (() => onDrill("RECOVERED"))}
+          openLabel="Open recovered records"
         />
+      </div>
+      <div className="md:col-span-6 xl:col-span-3">
         <Stat
           label="Still open"
           value={board.open_display}
           tone="amber"
-          sub={`${board.records_open} records in flight`}
+          sub={`${board.records_open} records in flight · ${board.escalations} waiting on a human`}
+          onOpen={onDrill && (() => onDrill("AT_RISK"))}
+          openLabel="Open at-risk records"
         />
+      </div>
+      <div className="md:col-span-6 xl:col-span-3">
         <Stat
           label="Written off"
           value={board.unrecoverable_display}
           tone="red"
-          sub={`${board.records_unrecoverable} deliberately not chased`}
+          sub={`${board.records_unrecoverable} deliberately not chased — never-retry causes and dead mandates`}
+          onOpen={onDrill && (() => onDrill("CLOSED"))}
+          openLabel="Open stopped records"
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* --- the money band, tying those four together ------------------- */}
+      <div className="md:col-span-12">
+        <Card bodyClass="pt-5">
+          <MoneySplit
+            segments={[
+              {
+                label: "Recovered",
+                paise: board.recovered_paise,
+                display: board.recovered_display,
+                tone: "green",
+              },
+              {
+                label: "Still open",
+                paise: board.open_paise,
+                display: board.open_display,
+                tone: "amber",
+              },
+              {
+                label: "Written off",
+                paise: board.unrecoverable_paise,
+                display: board.unrecoverable_display,
+                tone: "hatch",
+              },
+            ]}
+          />
+          {!board.balances && (
+            <p className="mt-3 text-[11px] font-medium text-red">
+              Scoreboard does not balance — the three segments should sum to the
+              money detected.
+            </p>
+          )}
+        </Card>
+      </div>
+
+      {/* --- diagnosis is the product ------------------------------------ */}
+      <div className="md:col-span-12 lg:col-span-8">
         <Card
           title="Recovery by root cause"
-          hint="Diagnosis is the product. Each cause gets a different response, and the rates diverge accordingly."
+          hint="Column height is how many records carried that cause; the solid fill is how many came back. Each cause gets a different response, and the rates diverge accordingly."
+          className="h-full"
         >
           {causes.length === 0 ? (
             <Empty>Run a batch to populate the scoreboard.</Empty>
           ) : (
-            <div className="space-y-3">
-              {causes.map((c) => (
-                <div key={c.root_cause}>
-                  <div className="flex items-baseline justify-between gap-3 text-sm">
-                    <span className="font-medium">{c.root_cause}</span>
-                    <span className="num text-muted">
-                      <span
-                        className={
-                          c.rate >= 0.3
-                            ? "text-green"
-                            : c.rate > 0
-                              ? "text-amber"
-                              : "text-dim"
-                        }
-                      >
-                        {(c.rate * 100).toFixed(0)}%
-                      </span>{" "}
-                      <span className="text-dim">
-                        {c.recovered_records}/{c.records}
-                      </span>
-                    </span>
-                  </div>
-                  <div className="mt-1.5">
-                    <Bar
-                      value={c.rate}
-                      tone={c.rate >= 0.3 ? "green" : c.rate > 0 ? "amber" : "red"}
-                    />
-                  </div>
-                  <div className="mt-1 flex justify-between text-[11px] text-dim">
-                    <span>{c.contacts} customer contacts</span>
-                    <span className="num">
-                      {(c.recovered_paise / 100).toLocaleString("en-IN", {
-                        style: "currency",
-                        currency: "INR",
-                        maximumFractionDigits: 0,
-                      })}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <CauseChart data={causes} />
           )}
         </Card>
+      </div>
 
+      <div className="md:col-span-6 lg:col-span-4">
         <Card
-          title={`Guardrails — ${fired.reduce((n, [, held]) => n + held, 0)} records held`}
-          hint="Every action the agent wanted to take and was not allowed to. The blocks are the point, not the exceptions."
+          title="How the batch resolved"
+          hint="Every detected record ends in exactly one of these three."
+          className="h-full"
         >
-          {fired.length === 0 ? (
+          <ResolutionGauge
+            centre={`${(board.record_recovery_rate * 100).toFixed(1)}%`}
+            centreLabel="records recovered"
+            segments={[
+              { label: "Recovered", value: board.records_recovered, tone: "green" },
+              { label: "Open", value: board.records_open, tone: "amber" },
+              {
+                label: "Written off",
+                value: board.records_unrecoverable,
+                tone: "hatch",
+              },
+            ]}
+          />
+          <ChartNote>
+            Recovery rate by <em>record</em>. By value it is{" "}
+            {pct(board.recovery_rate)} — the agent recovers proportionally more
+            small failures than large ones, because large ones hit the value
+            ceiling and go to a human.
+          </ChartNote>
+        </Card>
+      </div>
+
+      {/* --- what it refused to do --------------------------------------- */}
+      <div className="md:col-span-6 lg:col-span-4">
+        <Card
+          title="Guardrails"
+          hint={`${heldTotal} records held back. ${held.length} of ${REGISTERED} rules fired on this batch.`}
+          className="h-full"
+        >
+          {held.length === 0 ? (
             <Empty>Nothing has been refused yet.</Empty>
           ) : (
+            <>
+              <ul className="space-y-3">
+                {held.map(([name, records, refusals]) => (
+                  <RailBar
+                    key={name}
+                    label={name}
+                    note={`${GUARDRAIL_BLURB[name] ?? "guardrail"} · ${refusals} refusals over the run`}
+                    value={records}
+                    max={maxHeld}
+                    suffix="records"
+                  />
+                ))}
+              </ul>
+              <ChartNote>
+                Every action the agent wanted to take and was not allowed to.
+                The blocks are the point, not the exceptions.
+              </ChartNote>
+              <ChartTable
+                caption="Guardrail refusals by rule"
+                head={["Guardrail", "Records held", "Refusals"]}
+                rows={held.map(([n, r, f]) => [n, r, f])}
+              />
+            </>
+          )}
+        </Card>
+      </div>
+
+      {/* --- the comparison ---------------------------------------------- */}
+      <div className="md:col-span-6 lg:col-span-5">
+        <Card
+          title="Versus a naive strategy"
+          hint="Retry everything 3× immediately, message every failure. Same records, same seeded outcomes — only the strategy differs."
+          className="h-full"
+        >
+          {failed ? (
+            <Empty>Baseline unavailable.</Empty>
+          ) : !pairs ? (
             <div className="space-y-3">
-              {fired.map(([name, held, refusals]) => (
-                <div key={name}>
-                  <div className="flex items-baseline justify-between gap-3 text-sm">
-                    <span className="font-medium">{name}</span>
-                    <span className="num text-red">{held}</span>
-                  </div>
-                  <div className="mt-1.5">
-                    <Bar value={held / maxFired} tone="red" />
-                  </div>
-                  <div className="mt-1 flex justify-between gap-2 text-[11px] text-dim">
-                    <span>{GUARDRAIL_BLURB[name] ?? "guardrail"}</span>
-                    <span className="num shrink-0">
-                      {refusals} refusals over the run
-                    </span>
-                  </div>
-                </div>
-              ))}
+              <Skeleton className="h-4 w-1/3" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+          ) : (
+            <>
+              <PairedBars rows={pairs} />
+              <ChartNote>
+                The naive run collects more rupees. It also spends more than
+                twice the customer goodwill per recovery to do it — and the card
+                to the right is why it could not ship.
+              </ChartNote>
+            </>
+          )}
+        </Card>
+      </div>
+
+      {/* --- the punchline ----------------------------------------------- */}
+      <div className="md:col-span-6 lg:col-span-3">
+        <Card tone="deep" className="h-full">
+          <p className="text-[13px] font-medium text-ondeep/80">
+            Compliance breaches
+          </p>
+          <p className="num mt-4 text-[56px] font-bold leading-none tracking-tight on-deep">
+            0
+          </p>
+          <p className="mt-2 text-[11px] leading-relaxed text-ondeep/70">
+            Contacts ReclaimAI made that a guardrail forbids. Not a target — a
+            structural property of putting the gate above the channel.
+          </p>
+
+          {comparison && (
+            <div className="mt-5 border-t border-ondeep/15 pt-4">
+              <p className="text-[11px] font-medium text-ondeep/80">
+                The naive run commits{" "}
+                <span className="num font-bold on-deep">
+                  {comparison.baseline.compliance_breaches}
+                </span>
+              </p>
+              <ul className="mt-2.5 space-y-1.5">
+                {(
+                  [
+                    ["To opted-out customers", comparison.baseline.contacts_to_opted_out],
+                    ["To numbers on DND", comparison.baseline.contacts_to_dnd],
+                    ["Inside quiet hours", comparison.baseline.contacts_in_quiet_hours],
+                    ["Over the frequency cap", comparison.baseline.customers_over_frequency_cap],
+                  ] as Array<[string, number]>
+                ).map(([label, n]) => (
+                  <li
+                    key={label}
+                    className="flex items-baseline justify-between gap-3 text-[11px]"
+                  >
+                    <span className="text-ondeep/70">{label}</span>
+                    <span className="num font-semibold on-deep">{n}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 text-[11px] leading-relaxed text-ondeep/75">
+                Plus {comparison.baseline.retries_against_never_retry} retries on
+                causes an issuer reads as card testing.
+              </p>
             </div>
           )}
         </Card>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card title="Cost of a recovery">
-          <div className="space-y-2 text-sm">
+      {/* --- the honest accounting --------------------------------------- */}
+      {comparison && comparison.gap.total.records > 0 && (
+        <div className="md:col-span-12 lg:col-span-8">
+          <Card
+            title="Where the naive strategy wins, and why"
+            hint={`It collects ${comparison.gap.total.display} we do not. Every rupee of that is accounted for below.`}
+            className="h-full"
+          >
+            <ul className="space-y-3">
+              {comparison.gap.reasons.map((r) => (
+                <RailBar
+                  key={r.reason}
+                  label={r.label}
+                  note={`${r.records} record${r.records === 1 ? "" : "s"}`}
+                  value={r.paise}
+                  valueText={r.display}
+                  max={Math.max(
+                    1,
+                    ...comparison.gap.reasons.map((x) => x.paise),
+                  )}
+                  tone="amber"
+                />
+              ))}
+            </ul>
+            <ChartNote>
+              Most of that gap is money the agent was told not to take —
+              contacts to people who opted out, amounts above its authority
+              ceiling, causes the policy table refuses to retry. Restraint has a
+              price and this is it, stated in rupees.
+            </ChartNote>
+            <ChartTable
+              caption="Money the naive strategy collects that ReclaimAI does not"
+              head={["Reason", "Records", "Amount"]}
+              rows={comparison.gap.reasons.map((r) => [
+                r.label,
+                r.records,
+                r.display,
+              ])}
+            />
+          </Card>
+        </div>
+      )}
+
+      <div className="md:col-span-12 lg:col-span-4">
+        <Card
+          title="Cost of a recovery"
+          hint="What the agent spent to get there."
+          className="h-full"
+        >
+          <dl className="space-y-2.5 text-[13px]">
             <Row label="Interventions executed" value={board.interventions} />
             <Row label="Customer contacts" value={board.contacts} />
             <Row
@@ -173,61 +451,43 @@ export default function Dashboard({ board }: { board: Scoreboard }) {
               value={board.silent_retries}
               hint="reached the bank, not the person"
             />
-            <Row
-              label="Contacts per recovery"
-              value={board.contacts_per_recovery.toFixed(2)}
-              strong
-            />
             <Row label="Human escalations" value={board.escalations} />
             <Row
               label="Outcomes attributed"
               value={board.webhooks_attributed}
               hint="via verified webhooks"
             />
+          </dl>
+          <div className="mt-4 rounded-2xl bg-greenwash p-4">
+            <dt className="text-[11px] font-medium text-muted">
+              Contacts per recovery
+            </dt>
+            <dd className="num mt-1 text-[28px] font-bold leading-none text-green">
+              {board.contacts_per_recovery.toFixed(2)}
+            </dd>
+            {comparison && (
+              <p className="mt-2 text-[11px] text-muted">
+                Naive spends{" "}
+                <span className="num font-semibold text-ink">
+                  {comparison.baseline.contacts_per_recovery.toFixed(2)}
+                </span>{" "}
+                for the same job.
+              </p>
+            )}
           </div>
-        </Card>
-
-        <Card
-          className="lg:col-span-2"
-          title="Versus a naive strategy"
-          hint="Retry everything 3× immediately, message every failure. Same 120 records, same seeded outcomes — only the strategy differs."
-        >
-          {failed ? (
-            <Empty>Baseline unavailable.</Empty>
-          ) : !comparison ? (
-            <Empty>Computing…</Empty>
-          ) : (
-            <BaselineTable comparison={comparison} board={board} />
-          )}
+          <p className="mt-3 text-[11px] text-dim">
+            Total money detected this batch: {inr(board.at_risk_paise)}.
+          </p>
         </Card>
       </div>
 
-      {comparison && comparison.gap.total.records > 0 && (
-        <Card
-          title="Where the naive strategy wins, and why"
-          hint={`It collects ${comparison.gap.total.display} we do not. Every rupee of that is accounted for below.`}
-        >
-          <div className="space-y-2">
-            {comparison.gap.reasons.map((r) => (
-              <div
-                key={r.reason}
-                className="flex items-center justify-between gap-4 rounded border border-line bg-panel2 px-3 py-2 text-sm"
-              >
-                <span className="text-muted">{r.label}</span>
-                <span className="num shrink-0 tabular-nums">
-                  <span className="text-dim">{r.records} rec</span>{" "}
-                  <span className="font-medium">{r.display}</span>
-                </span>
-              </div>
-            ))}
-          </div>
-          <p className="mt-3 text-xs text-muted">
-            Most of that gap is money the agent was told not to take — contacts to
-            people who opted out, amounts above its authority ceiling, causes the
-            policy table refuses to retry. Restraint has a price and this is it,
-            stated in rupees.
-          </p>
-        </Card>
+      {failed && (
+        <div className="md:col-span-12">
+          <Badge tone="amber">
+            Baseline comparison unavailable — the rest of the scoreboard is
+            unaffected.
+          </Badge>
+        </div>
       )}
     </div>
   );
@@ -237,94 +497,18 @@ function Row({
   label,
   value,
   hint,
-  strong,
 }: {
   label: string;
   value: string | number;
   hint?: string;
-  strong?: boolean;
 }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <span className="text-muted">
+      <dt className="text-muted">
         {label}
         {hint && <span className="ml-1.5 text-[11px] text-dim">{hint}</span>}
-      </span>
-      <span className={`num ${strong ? "text-lg font-semibold" : ""}`}>
-        {value}
-      </span>
+      </dt>
+      <dd className="num shrink-0 font-semibold text-ink">{value}</dd>
     </div>
-  );
-}
-
-function BaselineTable({
-  comparison,
-  board,
-}: {
-  comparison: Comparison;
-  board: Scoreboard;
-}) {
-  const b = comparison.baseline;
-  const rows: Array<[string, string, string, "good" | "bad" | "neutral"]> = [
-    ["Recovered", b.recovered_display, board.recovered_display, "neutral"],
-    [
-      "Recovery rate (records)",
-      pct(b.record_recovery_rate),
-      pct(board.record_recovery_rate),
-      "neutral",
-    ],
-    ["Customer contacts", String(b.contacts), String(board.contacts), "good"],
-    [
-      "Contacts per recovery",
-      b.contacts_per_recovery.toFixed(2),
-      board.contacts_per_recovery.toFixed(2),
-      "good",
-    ],
-    ["Contacts to opted-out", String(b.contacts_to_opted_out), "0", "good"],
-    ["Contacts on DND", String(b.contacts_to_dnd), "0", "good"],
-    ["Contacts in quiet hours", String(b.contacts_in_quiet_hours), "0", "good"],
-    [
-      "Retries on never-retry causes",
-      String(b.retries_against_never_retry),
-      "0",
-      "good",
-    ],
-  ];
-
-  return (
-    <>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-[11px] uppercase tracking-widest text-dim">
-            <th className="pb-2 text-left font-semibold"> </th>
-            <th className="pb-2 text-right font-semibold">Naive</th>
-            <th className="pb-2 text-right font-semibold">ReclaimAI</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(([label, left, right, kind]) => (
-            <tr key={label} className="border-t border-line">
-              <td className="py-1.5 text-muted">{label}</td>
-              <td className="num py-1.5 text-right text-muted">{left}</td>
-              <td
-                className={`num py-1.5 text-right font-medium ${
-                  kind === "good" ? "text-green" : ""
-                }`}
-              >
-                {right}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="mt-3 text-xs">
-        <Badge tone="red">
-          {b.compliance_breaches} contacts the guardrail engine refuses
-        </Badge>{" "}
-        <span className="text-dim">
-          — the naive run is not merely less efficient, it is not deployable.
-        </span>
-      </p>
-    </>
   );
 }

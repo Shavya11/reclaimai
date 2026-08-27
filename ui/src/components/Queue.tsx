@@ -6,8 +6,13 @@
 // intends to do next and when. A record sitting still must say why it is
 // sitting still — "blocked" with no reason is the same as no information, so
 // every deferral carries its guardrail and the time it comes back.
+//
+// Search and filter are owned by the shell rather than by this component: the
+// header search box and the drill-through arrows on the dashboard both land
+// here, and two sources of truth for "what is on screen" would have been one
+// too many.
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { RecordRow, fmtTime } from "@/lib/api";
 import { Badge, Card, Empty, STATE_TONE } from "@/components/ui";
@@ -24,13 +29,18 @@ const FILTERS = [
 export default function Queue({
   records,
   onOpen,
+  search,
+  onSearch,
+  filter,
+  onFilter,
 }: {
   records: RecordRow[];
   onOpen: (id: string) => void;
+  search: string;
+  onSearch: (v: string) => void;
+  filter: string;
+  onFilter: (v: string) => void;
 }) {
-  const [filter, setFilter] = useState<string>("all");
-  const [search, setSearch] = useState("");
-
   const rows = useMemo(() => {
     let out = records;
     if (filter === "blocked") out = out.filter((r) => r.blocks.length > 0);
@@ -54,49 +64,79 @@ export default function Queue({
     return c;
   }, [records]);
 
+  const shown = rows.reduce((n, r) => n + r.amount_paise, 0);
+
   return (
     <Card
-      title="Recovery queue"
+      title={`${rows.length} of ${records.length} records`}
       hint="Click any record to open its full decision trail."
       right={
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="record, customer, cause…"
-          className="w-56 rounded border border-line bg-panel2 px-2 py-1 text-xs text-ink outline-none placeholder:text-dim focus:border-blue"
-        />
+        <div className="text-right">
+          <p className="num text-[22px] font-bold leading-none text-ink">
+            {(shown / 100).toLocaleString("en-IN", {
+              style: "currency",
+              currency: "INR",
+              maximumFractionDigits: 0,
+            })}
+          </p>
+          <p className="mt-1 text-[11px] text-dim">shown</p>
+        </div>
       }
     >
-      <div className="mb-3 flex flex-wrap gap-1.5">
+      <div className="mb-4 flex flex-wrap items-center gap-1.5">
         {FILTERS.map((f) => (
           <button
             key={f.key}
-            onClick={() => setFilter(f.key)}
-            className={`rounded border px-2 py-1 text-xs transition ${
+            type="button"
+            onClick={() => onFilter(f.key)}
+            aria-pressed={filter === f.key}
+            className={`cursor-pointer rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors duration-200 ${
               filter === f.key
-                ? "border-blue/40 bg-blue/10 text-blue"
-                : "border-line bg-panel2 text-muted hover:text-ink"
+                ? "border-green/30 bg-greenwash text-green"
+                : "border-line bg-panel text-muted hover:border-linestrong hover:text-ink"
             }`}
           >
             {f.label}
             <span className="num ml-1.5 text-dim">{counts[f.key] ?? 0}</span>
           </button>
         ))}
+
+        {search && (
+          <button
+            type="button"
+            onClick={() => onSearch("")}
+            className="ml-auto cursor-pointer rounded-full border border-line px-3 py-1.5 text-[12px] text-muted transition-colors duration-200 hover:text-ink"
+          >
+            Clear “{search}”
+          </button>
+        )}
       </div>
 
       {rows.length === 0 ? (
         <Empty>No records match.</Empty>
       ) : (
-        <div className="-mx-4 overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm">
+        <div className="-mx-5 overflow-x-auto">
+          <table className="w-full min-w-[900px] text-[13px]">
             <thead>
-              <tr className="border-b border-line text-[11px] uppercase tracking-widest text-dim">
-                <th className="px-4 py-2 text-left font-semibold">Record</th>
-                <th className="px-2 py-2 text-right font-semibold">Amount</th>
-                <th className="px-2 py-2 text-left font-semibold">Root cause</th>
-                <th className="px-2 py-2 text-left font-semibold">State</th>
-                <th className="px-2 py-2 text-left font-semibold">Next action</th>
-                <th className="px-4 py-2 text-left font-semibold">Why it waits</th>
+              <tr className="border-b border-line text-[10px] uppercase tracking-wider text-dim">
+                <th scope="col" className="px-5 py-2.5 text-left font-semibold">
+                  Record
+                </th>
+                <th scope="col" className="px-2 py-2.5 text-right font-semibold">
+                  Amount
+                </th>
+                <th scope="col" className="px-2 py-2.5 text-left font-semibold">
+                  Root cause
+                </th>
+                <th scope="col" className="px-2 py-2.5 text-left font-semibold">
+                  State
+                </th>
+                <th scope="col" className="px-2 py-2.5 text-left font-semibold">
+                  Next action
+                </th>
+                <th scope="col" className="px-5 py-2.5 text-left font-semibold">
+                  Why it waits
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -104,50 +144,68 @@ export default function Queue({
                 <tr
                   key={r.id}
                   onClick={() => onOpen(r.id)}
-                  className="cursor-pointer border-b border-line/60 hover:bg-panel2"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onOpen(r.id);
+                    }
+                  }}
+                  className="cursor-pointer border-b border-line/60 transition-colors duration-200 hover:bg-panel2"
                 >
-                  <td className="px-4 py-2">
+                  <td className="px-5 py-2.5">
                     <div className="num font-medium">{r.id}</div>
                     <div className="text-[11px] text-dim">
                       {r.counterparty_id} · {r.leak_type}
                       {r.issuer_bank ? ` · ${r.issuer_bank}` : ""}
                     </div>
                   </td>
-                  <td className="num px-2 py-2 text-right font-medium">
+                  <td className="num px-2 py-2.5 text-right font-semibold">
                     {r.amount_display}
                   </td>
-                  <td className="px-2 py-2">
-                    <span className="text-xs">{r.root_cause ?? "—"}</span>
+                  <td className="px-2 py-2.5">
+                    <span className="text-[12px]">{r.root_cause ?? "—"}</span>
                     {r.last_policy_ref && (
                       <div className="num text-[11px] text-dim">
                         {r.last_policy_ref}
                       </div>
                     )}
                   </td>
-                  <td className="px-2 py-2">
+                  <td className="px-2 py-2.5">
                     <Badge tone={STATE_TONE[r.state] ?? "plain"}>{r.state}</Badge>
                     {r.recovered_paise > 0 && (
-                      <div className="num mt-1 text-[11px] text-green">
+                      <div className="num mt-1 text-[11px] font-medium text-green">
                         +{(r.recovered_paise / 100).toLocaleString("en-IN")}
                       </div>
                     )}
                   </td>
-                  <td className="px-2 py-2">
-                    <div className="text-xs">
-                      {r.last_action ?? "—"}
-                      {r.attempts > 0 && (
-                        <span className="text-dim"> · attempt {r.attempts}</span>
-                      )}
-                    </div>
-                    <div className="num text-[11px] text-dim">
-                      {r.next_action_at
-                        ? `due ${fmtTime(r.next_action_at)}`
-                        : fmtTime(r.last_action_at)}
-                    </div>
+                  <td className="px-2 py-2.5">
+                    {/* Nothing scheduled and nothing done is one dash, not two
+                        stacked ones. */}
+                    {!r.last_action && !r.next_action_at && !r.last_action_at ? (
+                      <span className="text-[12px] text-dim">—</span>
+                    ) : (
+                      <>
+                        <div className="text-[12px]">
+                          {r.last_action ?? "—"}
+                          {r.attempts > 0 && (
+                            <span className="text-dim">
+                              {" "}
+                              · attempt {r.attempts}
+                            </span>
+                          )}
+                        </div>
+                        <div className="num text-[11px] text-dim">
+                          {r.next_action_at
+                            ? `due ${fmtTime(r.next_action_at)}`
+                            : fmtTime(r.last_action_at)}
+                        </div>
+                      </>
+                    )}
                   </td>
-                  <td className="px-4 py-2">
+                  <td className="px-5 py-2.5">
                     {r.blocks.length === 0 ? (
-                      <span className="text-xs text-dim">—</span>
+                      <span className="text-[12px] text-dim">—</span>
                     ) : (
                       <div className="space-y-1">
                         {r.blocks.slice(0, 2).map((b, i) => (

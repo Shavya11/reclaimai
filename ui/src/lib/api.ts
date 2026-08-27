@@ -125,9 +125,15 @@ export type AuditEvent = {
   at: string | null;
 };
 
+// Mirrors BaselineResult.as_dict() in reclaim/baseline.py, field for field.
 export type Baseline = {
   label: string;
+  records: number;
+  at_risk_paise: number;
+  recovered_paise: number;
+  at_risk_display: string;
   recovered_display: string;
+  records_recovered: number;
   recovery_rate: number;
   record_recovery_rate: number;
   contacts: number;
@@ -166,6 +172,7 @@ export type Health = {
   autopilot_enabled: boolean;
   razorpay_credentials: boolean;
   anthropic_credentials: boolean;
+  gemini_credentials: boolean;
   model: string;
   clock: string;
   time_travelled: boolean;
