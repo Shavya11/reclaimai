@@ -1,5 +1,16 @@
 # DEPLOY — Render (API) + Vercel (dashboard)
 
+> **Status:** GitHub and Vercel are done. Render is not.
+>
+> | Piece | State |
+> |---|---|
+> | GitHub | `github.com/Shavya11/reclaimai` (private), 10 commits |
+> | Vercel | **live** — https://reclaimai-shavya.vercel.app |
+> | Render | **not deployed** — needs a browser signup, see step 1 |
+>
+> The dashboard loads but shows a red banner: it has no API to call until Render
+> is up. Step 1 and step 2.5 below are all that is left.
+
 **Read this first: the point of deploying is the webhook, not the hosting.**
 
 Every other part of this system has been exercised. The webhook receiver, the
@@ -21,20 +32,10 @@ deployment receive webhooks and act as a link you can put in the submission.
 
 ---
 
-## 0. Push to GitHub  (you, 5 min)
+## 0. Push to GitHub  ✅ DONE
 
-There is no git remote yet. Render and Vercel both deploy from a repo.
-
-```bash
-gh repo create reclaimai --private --source=. --push
-# or: git remote add origin git@github.com:<you>/reclaimai.git && git push -u origin master
-```
-
-`.env` is gitignored and stays out of this. Check it did:
-
-```bash
-git ls-files | grep -c "^\.env$"     # must print 0
-```
+`github.com/Shavya11/reclaimai`, private, 10 commits. `.env` is gitignored and
+was verified absent from the push before it ran.
 
 ---
 
@@ -69,7 +70,7 @@ render.yaml — nothing else changes.
 
 ---
 
-## 2. Vercel — the dashboard  (you, 10 min)
+## 2. Vercel — the dashboard  ✅ DONE (except step 2.5)
 
 1. vercel.com → **Add New** → **Project** → same repo.
 2. **Set Root Directory to `ui`.** This is the one setting people miss, and
