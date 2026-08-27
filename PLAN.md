@@ -90,6 +90,15 @@ error → RootCause → ProposedAction → ALLOW/BLOCK without touching Razorpay
   - Pydantic validation; validation failure → UNKNOWN → human
   - Signature cache + semaphore(8)
   - Fallback chain: LLM → deterministic → UNKNOWN. **Never crash the batch.**
+  - **Runs live on `gemini-3.5-flash-lite`** (free tier) as well as Anthropic.
+    Both diagnosers share one prompt, one closed schema and one
+    `CachedDiagnoser`; the provider is a config value. Anthropic wins when both
+    keys are set, because that is what PROJECT.md describes.
+  - The fallback chain is exercised, not theoretical: a retired model id (404)
+    and a daily-quota 429 were both hit in testing and both degraded to UNKNOWN
+    without failing a batch. Because a 429 is indistinguishable from an honest
+    refusal in the scoreboard, layer 2 paces itself under the free-tier limit
+    and logs when it gives up.
 - [x] **2.4 Policy engine** (1.5h)
   - `policies.yaml` per PROJECT.md §6, loader in `brain/rules.py` (ONE loader —
     V2 swaps this for DB)
@@ -204,13 +213,38 @@ tick only fires the actions that are *due*; `cli demo` walks the whole schedule.
 
 ## Risk register
 
-| Risk | Mitigation |
-|---|---|
-| Webhooks do not reach localhost | Set up the tunnel on **Day 1**, not Day 3 |
-| Razorpay test mode behaves oddly | `DRY_RUN` mode + recorded fixtures so the demo never depends on live API |
-| Day 3 slips into Day 4 | Cut UI polish first (§4.3 queue screen), never cut §4.5 baseline or §4.7 rehearsal |
-| LLM latency stalls the batch | Signature cache + semaphore + deterministic fallback (already in plan) |
-| Demo crashes on stage | Rehearse twice; keep a recorded fallback video of a successful run |
+| Risk | Mitigation | Outcome |
+|---|---|---|
+| Webhooks do not reach localhost | ~~Set up the tunnel on Day 1~~ — deploying to Render gave Razorpay a public URL instead | **Solved.** Five real deliveries verified, then lost to Render's ephemeral disk |
+| Razorpay test mode behaves oddly | `DRY_RUN` mode + recorded fixtures so the demo never depends on live API | Held |
+| Day 3 slips into Day 4 | Cut UI polish first (§4.3 queue screen), never cut §4.5 baseline or §4.7 rehearsal | Not needed |
+| LLM latency stalls the batch | Signature cache + semaphore + deterministic fallback | Held. The real limit was free-tier *quota*, not latency — see 2.3 |
+| Demo crashes on stage | Rehearse twice; keep a recorded fallback video of a successful run | Rehearsed; see `DEMO.md` |
+| **Unforeseen:** a fixture that cannot be diagnosed | — | Layer 2 scored 0% until the generator was fixed. Caught only by running it live |
+| **Unforeseen:** deployed numbers disagreeing with published ones | — | Boot seed ran without a diagnoser, and without the full arc. Both fixed; the deployment is now checked against the README, not assumed |
+
+## After Day 4 — what continued
+
+The four days closed with everything above ticked. What followed is recorded here
+so the plan does not read as if the project stopped when the checkboxes ran out.
+
+- [x] **Deployment** — Render (API) + Vercel (dashboard). See [DEPLOY.md](DEPLOY.md).
+      This is what replaced the tunnel and made real webhook delivery possible.
+- [x] **Error codes verified against Razorpay's published list** — caught 16 map
+      keys and 3 generator strings Razorpay never emits. See 1.2.
+- [x] **Layer 2 live on a free tier**, and the fixture fix that let it work:
+      70.0% → 97.5% overall diagnosis accuracy. See 2.3.
+- [x] **Deployed scoreboard reconciled with the README** — the boot seed now
+      walks the full arc *and* passes its diagnoser, so the published number and
+      the live one are the same number.
+- [ ] **Re-capture live webhook proof into the repo** — the five verified
+      deliveries were lost with Render's `/tmp`. Pay one link, save the
+      `simulated: false` JSON under `evidence/`. Proof on an ephemeral disk has
+      an expiry date; proof in git does not.
+- [ ] **Rotate the Gemini API key** after the buildathon — it was handled in
+      plaintext during setup.
+
+---
 
 ## Non-negotiables (if everything else burns down)
 

@@ -65,6 +65,17 @@ def _seed_if_empty() -> None:
     On a thread, because the arc takes ~25 seconds and a health check that has
     to wait that long is a deploy that gets marked failed. The scoreboard fills
     in as the ticks land; the API answers from the first moment.
+
+    It diagnoses with layer 2, when a key is configured. Omitting it was a quiet
+    way to publish the wrong number: the batch completed, the page looked right,
+    and 38 records sat in UNKNOWN because nothing had asked the model. Setting
+    GEMINI_API_KEY on the host could not fix that on its own, which is the worst
+    kind of bug - the configuration says one thing and the output says another.
+
+    With layer 2 on, the arc takes about two minutes rather than twenty-five
+    seconds, because the free tier is paced. It also spends ~28 of a 500/day
+    quota per cold boot, and a free instance cold-boots whenever it has been
+    idle 15 minutes.
     """
     import threading
 
@@ -76,10 +87,12 @@ def _seed_if_empty() -> None:
                 return
             from ..runner import DEMO_ARC, run_batch, tick
 
-            log.info("empty database at boot — seeding and walking the demo arc")
-            run_batch(dry_run=None)
+            llm = _llm()
+            log.info("empty database at boot — seeding and walking the demo arc "
+                     "(layer 2 %s)", "on" if llm else "off")
+            run_batch(llm=llm, dry_run=None)
             for step in DEMO_ARC + ["+7d"] * 3:
-                tick(advance=step, dry_run=None)
+                tick(advance=step, llm=llm, dry_run=None)
             log.info("boot seed complete")
         except Exception as exc:  # noqa: BLE001
             log.warning("boot seed failed, serving an empty scoreboard: %s", exc)

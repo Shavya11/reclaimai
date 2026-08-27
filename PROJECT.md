@@ -534,15 +534,41 @@ extraction over a text transcript (~3h) instead of live audio.
 Recorded here rather than quietly absorbed, because a spec that silently drifts
 from the build is worse than one that admits the drift.
 
-**Webhooks are real; the tunnel is not.** `cloudflared` is not installed on the
-build machine, so Razorpay has no public URL to reach. The receiver, the
-HMAC-SHA256 verification and the whole attribution chain are production code and
-carry 19 tests. What stands in for a live delivery is `reclaim/settlement.py`: it
-signs Razorpay-shaped payloads and posts them through the same `receive()` a real
-delivery hits, so nothing bypasses the signature check or the walk from
-`payment_link.paid` back to the intervention that minted the link. The outcome
-simulator decides only *whether the customer paid* — the judgement §10 already
-discloses as modelled. Wiring a live tunnel is a config change, not a code change.
+**Webhooks are real, and so was the delivery — briefly.** No tunnel was ever
+needed: deploying the API to Render gave Razorpay a public URL, and five genuine
+deliveries arrived and were verified — `payment.captured` PROCESSED, `order.paid`
+and `payment_link.paid` ALREADY_ATTRIBUTED. Render's free tier has no persistent
+disk; the instance restarted and took `/tmp` with it, so the artifact is gone
+while the fact stands. `GET /api/webhooks` now returns only `simulated: true`
+events from the boot seed.
+
+The receiver, the HMAC-SHA256 verification and the attribution chain are
+production code carrying 19 tests. What stands in for a delivery day to day is
+`reclaim/settlement.py`: it signs Razorpay-shaped payloads and posts them through
+the same `receive()` a real delivery hits, so nothing bypasses the signature check
+or the walk from `payment_link.paid` back to the intervention that minted the
+link. The outcome simulator decides only *whether the customer paid* — the
+judgement §10 already discloses as modelled.
+
+To have live proof standing at demo time, capture it into the repo rather than
+plan to re-do it on stage: pay one link, save the `simulated: false` JSON. Proof
+on an ephemeral disk is proof with an expiry date.
+
+**Layer 2 runs on a free tier, and the fixture had to be fixed before it could.**
+`gemini-3.5-flash-lite` via `google-genai`, chosen over Anthropic only because it
+costs nothing; `LLMDiagnoser` and `GeminiDiagnoser` share one prompt, one closed
+schema and one `CachedDiagnoser`, so the provider is a config value. Its first
+live run scored 0% on the 36 records it exists to resolve — the fixture had been
+labelling records `INSUFFICIENT_FUNDS` while giving them no payment history and a
+midday timestamp, so UNKNOWN was the only honest answer available. Fixing the data
+(and deriving `attempted_hour_ist` / `days_to_month_end` rather than making the
+model parse an ISO string) took overall accuracy from 70.0% to 97.5%.
+
+Two things that fixture work taught, both now in the code: a 429 degrades to
+UNKNOWN and is therefore *indistinguishable in the scoreboard from the model
+honestly declining*, so layer 2 paces itself and logs when it gives up; and the
+boot seed on the API host must pass its diagnoser explicitly, or a deployment
+with a key configured still publishes 38 UNKNOWNs and looks fine doing it.
 
 **Schedules anchor on the record, not on the clock.** `20m` means twenty minutes
 after the failure, not twenty minutes after whenever the batch happens to run.
