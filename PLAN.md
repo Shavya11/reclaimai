@@ -129,14 +129,25 @@ scoreboard prints real recovered rupees.
   - Handle `payment.captured`, `payment_link.paid`, `order.paid`,
     `subscription.charged`, `payment.failed`
   - Idempotent handling — webhooks retry and can arrive twice
-  - ~~Local tunnel (ngrok/cloudflared)~~ — cloudflared is not installed, so there
-    is no public URL for Razorpay to reach. The receiver is exercised instead by
-    `reclaim/settlement.py`, which signs real payloads and posts them through the
-    same `receive()` a live delivery hits. `tests/test_webhooks.py` (19 tests)
-    is the evidence, including the raw-bytes-vs-reserialized-JSON case.
-    **Still to do when a tunnel exists:** point a Razorpay webhook at
-    `/webhooks/razorpay`, set `RAZORPAY_WEBHOOK_SECRET`, pay a link, confirm the
-    record flips to RECOVERED.
+  - ~~Local tunnel (ngrok/cloudflared)~~ — solved by deploying instead. The
+    Render service at `reclaimai-api.onrender.com` is the public URL Razorpay
+    reaches; no tunnel was ever needed. `tests/test_webhooks.py` (19 tests)
+    remains the evidence for the signing path, including the
+    raw-bytes-vs-reserialized-JSON case.
+  - **Real deliveries confirmed, then lost.** Five genuine Razorpay webhooks
+    arrived on the deployed instance and were verified — `payment.captured`
+    PROCESSED, `order.paid` and `payment_link.paid` ALREADY_ATTRIBUTED. Render's
+    free tier has no persistent disk, the instance restarted, and `/tmp` went
+    with it. `GET /api/webhooks` now returns 30 events, all `simulated: true`
+    from the boot seed, and zero with `simulated: false`.
+    **To have this standing at demo time**, pick one:
+    1. Capture the artifact into the repo — pay a link, save the
+       `simulated: false` JSON and a screenshot under `evidence/`. Proof then
+       lives in git rather than on an ephemeral disk. Preferred: re-doing it
+       live minutes before a demo is the option most likely to fail.
+    2. Re-pay a link shortly before presenting.
+    3. Add the persistent disk — the `disk:` block is already in
+       [render.yaml](render.yaml), commented out. Paid plan.
 - [x] **3.4 Outcome attribution** (1.5h)
   - link paid → find intervention → mark record RECOVERED → attribute ₹
   - This chain is the proof that the recovery was ours
