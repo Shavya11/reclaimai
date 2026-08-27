@@ -37,11 +37,11 @@ Browser on `http://127.0.0.1:8000`, **Dashboard** tab.
 
 **Dashboard, top row.**
 
-> "This merchant has ₹6.92 lakh sitting in failed payments, dead carts and
+> "This merchant has ₹8.25 lakh sitting in failed payments, dead carts and
 > bounced mandates. 120 records. Today nobody chases any of it — a failed
 > payment is a support ticket that never gets written."
 
-Point at **Money at risk ₹6,92,056 · 120 records detected**.
+Point at **Money at risk ₹8,24,984 · 120 records detected**.
 
 ---
 
@@ -96,7 +96,7 @@ Point at the decision trail:
 
 **Recovery queue → filter `Blocked`.** Then open **`REC_5001`**.
 
-> "This one the agent wanted to chase. ₹75,587. Two guardrails stopped it.
+> "This one the agent wanted to chase. ₹1,47,603 across two records. The value ceiling stopped it.
 >
 > The value ceiling: anything above ₹50,000 needs a human, whatever the policy
 > says. And the confidence floor: the diagnosis came back `UNKNOWN` at zero
@@ -122,7 +122,7 @@ Switch to the **Dashboard → Guardrails** panel:
 
 **Dashboard, scroll to "Versus a naive strategy".**
 
-> "Thirty-one percent of records recovered, at 1.97 contacts per recovery.
+> "Thirty-seven percent of records recovered, at 2.68 contacts per recovery.
 >
 > On its own that number means nothing. So here is the same 120 records under
 > what most tooling actually does — retry everything three times immediately,
@@ -232,7 +232,7 @@ first if you run long.
 
 ## Reproducibility
 
-`seed=42` produces the same 120 records, the same `₹6,92,056`, and the same
+`seed=42` produces the same 120 records, the same `₹8,24,984`, and the same
 timestamps on every machine and every run — `cli verify` checks the digest of
 every field, not just the total. So the numbers in this file are the numbers you
 will see. The scoreboard totals are stable for the whole day the batch is

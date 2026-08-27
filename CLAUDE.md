@@ -30,7 +30,7 @@ the amount, the timing, or the recipient.
 
 - Python 3.11+, FastAPI, SQLAlchemy, SQLite (file-based, zero setup)
 - `razorpay` official SDK — **test mode only** (`rzp_test_...`)
-- `anthropic` SDK (`claude-sonnet-5`) or `google-genai` (`gemini-3.7-flash`,
+- `anthropic` SDK (`claude-sonnet-5`) or `google-genai` (`gemini-3.5-flash-lite`,
   free tier) — forced tool use either way. Both diagnosers share one prompt and
   one schema; add a provider by subclassing `CachedDiagnoser`, never by copying it
 - Pydantic v2 at every boundary

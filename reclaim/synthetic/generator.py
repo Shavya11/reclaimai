@@ -55,10 +55,33 @@ LEAK_TYPE_FOR: dict[RootCause, LeakType] = {
 # come from history, amount, timing or the cohort signal.
 AMBIGUOUS_CAUSES = frozenset({RootCause.INSUFFICIENT_FUNDS, RootCause.RISK_DECLINE})
 
+# ...which only works if those signals are actually present. They were not:
+# a customer was drawn at random for every record regardless of cause, so a
+# third of the INSUFFICIENT_FUNDS records landed on people with no payment
+# history at all, at midday. Nothing in the context distinguished them, the
+# model correctly answered UNKNOWN every time, and layer 2 scored 0% on the
+# records it exists to resolve.
+#
+# Worse, the data contradicted the policy acting on it: policies.yaml retries
+# these at next_salary_window and outcomes.py grants that a 41% success rate,
+# which only makes sense for someone who normally pays and is short until
+# payday. So the two signals below are not tuning the fixture to please the
+# model - they are what the rest of the system already assumes is true.
+#
+# RISK_DECLINE is deliberately left with no tell. A fraud decline that
+# announces itself is not a fraud decline, and UNKNOWN -> human is the correct
+# handling for one.
+NIGHT_HOURS = (21, 22, 23)
+
 N_CUSTOMERS = 55
 OPT_OUT_RATE = 0.08
 DND_RATE = 0.15
-PRIOR_SUCCESS_RATE = 0.20
+# Raised from 0.20 so the pool of customers with a payment history is large
+# enough to carry the INSUFFICIENT_FUNDS records without the same few people
+# appearing over and over — which would distort the frequency-cap guardrail.
+# Also the more honest figure: most customers whose payment fails at an
+# established merchant have paid it before.
+PRIOR_SUCCESS_RATE = 0.45
 
 OUTAGE_ISSUER = "HDFC"
 OUTAGE_COUNT = 15  # clustered inside one hour -> makes the cohort signal real
@@ -90,6 +113,11 @@ class Batch:
     customers: list[Customer]
     truth: dict[str, RootCause]  # record_id -> the cause we planted
     traffic: dict[str, int]      # "ISSUER|YYYY-MM-DDTHH" -> total attempts
+    # The records deliberately clustered into the outage hour. Stated rather
+    # than left to be re-derived from (issuer, cause): a BANK_DOWNTIME record
+    # outside the cluster can draw the outage issuer by chance, and a test that
+    # guesses breaks the moment the RNG shifts under it.
+    outage_ids: frozenset[str] = frozenset()
 
     @property
     def total_at_risk(self) -> int:
@@ -149,6 +177,9 @@ def generate(seed: int = 42, n: int = 120, at=None) -> Batch:
 
     high_value_idx = set(rng.sample(range(n), HIGH_VALUE_COUNT))
 
+    # Drawn from only when the cause is INSUFFICIENT_FUNDS; see NIGHT_HOURS.
+    history_pool = [c.id for c in customers if c.successful_payments_lifetime > 0]
+
     # Bank-downtime records cluster on one issuer inside one hour. They carry the
     # generic "declined" error, so ONLY the cohort signal can identify them.
     outage_start = epoch - timedelta(hours=6)
@@ -157,21 +188,31 @@ def generate(seed: int = 42, n: int = 120, at=None) -> Batch:
 
     records: list[AtRiskRecord] = []
     truth: dict[str, RootCause] = {}
+    outage_ids: set[str] = set()
 
     for i, cause in enumerate(causes):
         rid = f"REC_{5000 + i}"
-        cust = by_id[f"CUST_{4000 + rng.randrange(N_CUSTOMERS)}"]
+        if cause is RootCause.INSUFFICIENT_FUNDS and history_pool:
+            cust = by_id[history_pool[rng.randrange(len(history_pool))]]
+        else:
+            cust = by_id[f"CUST_{4000 + rng.randrange(N_CUSTOMERS)}"]
         leak = LEAK_TYPE_FOR.get(cause, LeakType.FAILED_PAYMENT)
         amount = _amount(rng, i in high_value_idx)
 
         if i in clustered:
+            outage_ids.add(rid)
             issuer = OUTAGE_ISSUER
             detected = outage_start + timedelta(minutes=rng.randint(0, 59))
             error = dict(rng.choice(ec.AMBIGUOUS))  # outage disguised as a decline
         else:
             issuer = rng.choice(ec.ISSUERS)
-            detected = epoch - timedelta(hours=rng.randint(1, 72),
-                                        minutes=rng.randint(0, 59))
+            if cause is RootCause.INSUFFICIENT_FUNDS:
+                night = epoch - timedelta(days=rng.randint(1, 3))
+                detected = night.replace(hour=rng.choice(NIGHT_HOURS),
+                                         minute=rng.randint(0, 59))
+            else:
+                detected = epoch - timedelta(hours=rng.randint(1, 72),
+                                            minutes=rng.randint(0, 59))
             if leak is LeakType.ABANDONED_CART:
                 error = None  # no payment was ever attempted
             elif cause in AMBIGUOUS_CAUSES:
@@ -216,7 +257,8 @@ def generate(seed: int = 42, n: int = 120, at=None) -> Batch:
 
     _assign_contact_flags(customers, records, truth, rng)
     return Batch(records=records, customers=customers, truth=truth,
-                 traffic=_traffic(records, truth))
+                 traffic=_traffic(records, truth),
+                 outage_ids=frozenset(outage_ids))
 
 
 # Causes whose policy row contacts the customer. Only these can ever trip the

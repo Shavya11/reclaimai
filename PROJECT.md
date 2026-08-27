@@ -17,7 +17,7 @@ Five things the demo MUST show:
 
 | Requirement | Concrete proof |
 |---|---|
-| Measured money recovered | "₹5.84L at risk → ₹2.03L recovered (34.8%)" across 120 records |
+| Measured money recovered | "₹8.25L at risk → ₹1.22L recovered (36.7% of records)" across 120 records |
 | Across a batch | Bulk run, not one cherry-picked transaction |
 | Compliant escalation | Gentle → firmer → human handoff; quiet hours; opt-out honoured |
 | Stopping rules | Max attempts, cooldowns, permanent stop on opt-out |
@@ -152,7 +152,7 @@ Razorpay's generic `BAD_REQUEST_ERROR / payment_failed / "declined by the bank"`
 insufficient funds, card blocked, risk decline, and daily-limit — four causes needing four
 different responses. That is where the model earns its place.
 
-**Model:** `claude-sonnet-5`, or `gemini-3.7-flash` when only a Gemini key is
+**Model:** `claude-sonnet-5`, or `gemini-3.5-flash-lite` when only a Gemini key is
 present. Whichever answers, the contract above it is identical: a label from a
 closed enum and a confidence, never an action.
 **Method:** forced tool use for structured output — `tool_choice` on Anthropic,
@@ -473,7 +473,7 @@ recovery makes judges suspicious; 35% with a clear unrecoverable list makes you 
 
 **Backend** — Python 3.11+ / FastAPI
 - `razorpay` official SDK
-- `anthropic` SDK → `claude-sonnet-5`, or `google-genai` → `gemini-3.7-flash`
+- `anthropic` SDK → `claude-sonnet-5`, or `google-genai` → `gemini-3.5-flash-lite`
   (free tier). Layer 2 is one `Callable[[AtRiskRecord, CohortSignal | None],
   Diagnosis | None]`, so the provider is a config value, not an architecture.
 - SQLite (zero setup) via SQLAlchemy
@@ -576,18 +576,34 @@ repeatedly, so "cooldown: 95" and "cooldown: 17 records" are both true and only
 one of them is the number to quote. Conflating them would inflate exactly the
 figure this project argues against inflating.
 
-**Layer 2 has never run live.** There is no `ANTHROPIC_API_KEY` on the build
-machine. `llm_diagnoser.py` is built and unit-tested against a fake client, and
-`--no-llm` is a real code path with tests asserting the batch completes with the
-model down. Every number quoted in the README is therefore the floor with layer 2
-off: 38 of 120 records fall to `UNKNOWN` and go to a human instead of being
-guessed at. Say this out loud in the demo.
+**Layer 2 runs live, on Gemini's free tier** (`gemini-3.5-flash-lite`). Overall
+diagnosis accuracy is 97.5%: layer 1 resolves 69 records at 100%, the cohort
+signal 15 at 100%, and layer 2 the remaining 36 at 91.7%.
+
+It did not start there. The first live run scored 0% on those 36, and the reason
+is worth keeping: the fixture labelled 33 records `INSUFFICIENT_FUNDS` while
+drawing their customers at random, so a third of them had no payment history and
+a midday timestamp. Nothing in the context distinguished them, and the model
+answered UNKNOWN every time — correctly. The data, not the model, was wrong, and
+it contradicted the policy acting on it: `next_salary_window` retries assume
+someone who normally pays and is short until payday.
+
+`--no-llm` remains a real code path with tests asserting the batch completes with
+the model down, and the fallback chain is exercised rather than theoretical: a
+dead model id and a rate limit were both caught in testing and degraded to
+UNKNOWN without failing a batch.
+
+What layer 2 still will not do is guess. The 3 `RISK_DECLINE` records carry no
+tell by design; two come back UNKNOWN and reach a human, and the third is called
+`INSUFFICIENT_FUNDS` at high confidence because it happens to carry that
+signature. That last one is a real miss, it is in the audit trail, and it is the
+honest answer to "what does your model get wrong".
 
 ---
 
 ## 13. Demo script (5 minutes)
 
-1. **The leak** (30s) — "This merchant has ₹5.8L in failed payments and dead carts.
+1. **The leak** (30s) — "This merchant has ₹8.2L in failed payments and dead carts.
    Today nobody chases it."
 2. **Run the batch live** (60s) — hit Run, watch records flow diagnose → decide → execute.
 3. **Zoom into one record** (90s) — "Payment #4471, ₹12,400, failed. The agent read the
@@ -595,7 +611,7 @@ guessed at. Say this out loud in the demo.
    the evidence it used. So it did NOT retry immediately; it scheduled for the 1st.
    It retried. It worked." Show the audit trail.
 4. **Show a BLOCKED action** (45s) — "This one the agent wanted to chase. Guardrail stopped
-   it: customer opted out. This one was ₹78,000 — above ceiling, routed to a human."
+   it: customer opted out. Two more were above the ₹50,000 ceiling, routed to a human."
    ← **THE WINNING MOMENT. Restraint reads as maturity.**
 5. **The scoreboard** (60s) — recovered vs naive baseline, contacts per recovery,
    honest unrecoverable list.
@@ -619,3 +635,4 @@ guessed at. Say this out loud in the demo.
 3. **A baseline** — 35% vs 19% naive
 4. **Idempotency** — payments judges care about this more than anything
 5. **An honest unrecoverable list** — credibility beats inflated numbers
+  

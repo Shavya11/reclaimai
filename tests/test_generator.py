@@ -89,9 +89,7 @@ def test_frequency_cap_has_something_to_fire_on(batch):
 def test_issuer_outage_cluster_exists(batch):
     """~15 failures on one issuer inside one hour, carrying a generic decline —
     so only the cohort signal can identify them as BANK_DOWNTIME."""
-    hdfc = [r for r in batch.records
-            if r.raw_signals["issuer_bank"] == "HDFC"
-            and batch.truth[r.id] is RootCause.BANK_DOWNTIME]
+    hdfc = [r for r in batch.records if r.id in batch.outage_ids]
     assert len(hdfc) >= 10
     window = {r.detected_at.replace(minute=0, second=0, microsecond=0) for r in hdfc}
     assert len(window) <= 2  # all inside one hour bucket
@@ -99,9 +97,7 @@ def test_issuer_outage_cluster_exists(batch):
 
 def test_clustered_outage_records_look_like_plain_declines(batch):
     """If the error text gave it away, the cohort signal would be decoration."""
-    clustered = [r for r in batch.records
-                 if r.raw_signals["issuer_bank"] == "HDFC"
-                 and batch.truth[r.id] is RootCause.BANK_DOWNTIME]
+    clustered = [r for r in batch.records if r.id in batch.outage_ids]
     for r in clustered:
         assert r.raw_signals["error"]["reason"] in AMBIGUOUS_REASONS
 

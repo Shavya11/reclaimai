@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # Layer 2's other provider. Either key alone is enough; Anthropic wins when
     # both are set, because that is what PROJECT.md describes.
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.7-flash"
+    gemini_model: str = "gemini-3.5-flash-lite"
 
     autopilot_enabled: bool = True
 

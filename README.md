@@ -29,7 +29,7 @@ python -m venv .venv
 Every command takes `--json`.
 
 **The batch is seeded.** `seed 42` produces the same 120 records, the same
-`₹6,92,056`, and the same timestamps on every machine — `cli verify` compares a
+`₹8,24,984`, and the same timestamps on every machine — `cli verify` compares a
 digest of every field, not just the total, because amounts that reproduce while
 timestamps drift is how compliance counts quietly move between runs. Numbers below
 are meant to be reproduced, not trusted.
@@ -41,25 +41,26 @@ are meant to be reproduced, not trusted.
 ```
 BATCH RESULTS  (n = 120 at-risk records)
 
-  Money at risk                    ₹6,92,056
-  Money recovered                    ₹80,183   (11.6% by value, 31.7% by record)
-  Still open                       ₹4,77,600
-  Written off / unrecoverable      ₹1,34,273   (never-retry causes, escalated not chased)
+  Money at risk                    ₹8,24,984
+  Money recovered                  ₹1,22,347   (14.8% by value, 36.7% by record)
+  Still open                       ₹5,14,077
+  Written off / unrecoverable      ₹1,88,560   (never-retry causes, escalated not chased)
 
   Recovery rate by root cause
-    BANK_DOWNTIME           100%    22/22       ₹40,629     <- cohort signal, 0 contacts
-    CART_ABANDONMENT         39%     7/18       ₹15,268
-    AUTH_DROPOFF             28%     5/18        ₹3,623
-    EXPIRED_INSTRUMENT       24%     4/17       ₹20,663
-    UNKNOWN                   0%     0/38            ₹0     <- layer 2 offline, sent to a human
+    BANK_DOWNTIME            82%    18/22       ₹50,707     <- cohort signal, 0 contacts
+    INSUFFICIENT_FUNDS       37%    13/35       ₹31,301     <- layer 2, salary-window retry
+    AUTH_DROPOFF             28%     5/18       ₹30,039
+    EXPIRED_INSTRUMENT       24%     4/17        ₹3,653
+    CART_ABANDONMENT         22%     4/18        ₹6,647
     POLICY_BLOCK              0%     0/4             ₹0     <- correctly escalated, never chased
+    UNKNOWN                   0%     0/3             ₹0     <- layer 2 declined to guess
     MANDATE_REVOKED           0%     0/3             ₹0
 
-  Guardrails: 229 refusals across 88 records
-  Human escalations               47
-  Interventions executed          99   (75 contacts, 24 silent)
-  Contacts per recovery         1.97
-  Outcomes attributed             99   via verified webhooks
+  Guardrails: 271 refusals across 92 records
+  Human escalations               17
+  Interventions executed         141   (118 contacts, 23 silent)
+  Contacts per recovery         2.68
+  Outcomes attributed            141   via verified webhooks
 ```
 
 `recovered + open + written off == at risk`, asserted by `cli verify` and by
@@ -75,15 +76,15 @@ easy to quietly not publish the result.
 
 | | Naive | ReclaimAI |
 |---|---:|---:|
-| Recovered | ₹2,30,905 | ₹80,183 |
-| Recovery rate (records) | 41.7% | 31.7% |
-| Customer contacts | 272 | **75** |
-| Contacts per recovery | 5.44 | **1.97** |
-| Contacts to opted-out customers | 20 | **0** |
-| Contacts to customers on DND | 62 | **0** |
-| Contacts inside quiet hours | 124 | **0** |
+| Recovered | ₹3,62,225 | ₹1,22,347 |
+| Recovery rate (records) | 42.5% | 36.7% |
+| Customer contacts | 278 | **118** |
+| Contacts per recovery | 5.45 | **2.68** |
+| Contacts to opted-out customers | 29 | **0** |
+| Contacts to customers on DND | 45 | **0** |
+| Contacts inside quiet hours | 190 | **0** |
 | Retries against never-retry causes | 30 | **0** |
-| **Contacts our guardrails refuse** | **386** | **0** |
+| **Contacts our guardrails refuse** | **455** | **0** |
 
 **The naive strategy recovers more money.** Both runs draw their coin flips from
 the same seeded stream keyed on `(record, attempt)`, so record `REC_5041`'s second
@@ -93,13 +94,13 @@ what each chose to do, when, and to whom.
 So `cli baseline` itemises every rupee of the gap:
 
 ```
-₹1,50,722 the naive run collects and we do not:
-    8    ₹63,287   customer opted out or on DND - contact refused
-    1    ₹75,587   above the value ceiling - routed to a human
-    4    ₹10,541   diagnosed UNKNOWN - layer 2 unavailable
-   12    ₹19,594   still in flight - deferred, not abandoned
+₹2,41,069 the naive run collects and we do not:
+    3    ₹79,258   customer opted out or on DND - contact refused
+    2  ₹1,47,603   above the value ceiling - routed to a human
+    2    ₹12,104   still in flight - deferred, not abandoned
+    3     ₹2,104   our strategy simply did worse here
 
-₹1,38,357 of that is money the agent was told not to take.
+₹2,26,861 of that is money the agent was told not to take.
 ```
 
 The naive run is not a better strategy; it is an undeployable one. Publishing a
@@ -304,8 +305,8 @@ dashboard. [DEPLOY.md](DEPLOY.md) is the step-by-step.
 **Live:** dashboard at **https://reclaimai-eight.vercel.app**, API and webhook
 receiver at **https://reclaimai-api.onrender.com**.
 
-The deployed scoreboard reproduces the local one to the rupee — `₹80,183`
-recovered, 31.7% of records, 1.97 contacts per recovery — which is the seeded
+The deployed scoreboard reproduces the local one to the rupee — `₹1,22,347`
+recovered, 36.7% of records, 2.68 contacts per recovery — which is the seeded
 batch doing what it claims on a machine that has never seen this repo before.
 
 ```
@@ -335,7 +336,13 @@ probabilities, stated openly rather than presented as live conversion data.
 Three things are built and tested but have not been exercised against the live
 world, and are listed here rather than left for a judge to find:
 
-1. **Layer 2 has never made a real API call** (no `ANTHROPIC_API_KEY`).
+1. **Layer 2's accuracy depends on a fixture we corrected.** It scored 0% on
+   its 36 records until the generator was fixed to give `INSUFFICIENT_FUNDS`
+   records the signals that identify one — prior payment history, a late-night
+   attempt near month-end. Those are what `policies.yaml` already assumes when
+   it retries at `next_salary_window`; the fixture simply had not carried them.
+   The prompt was sharpened in the same pass. Both are stated because 97.5% read
+   without them would be a number doing more work than it earned.
 2. **No webhook has arrived from Razorpay** (no tunnel) — the receiver is driven
    by locally signed payloads through the same endpoint.
 3. **Only two error reasons were harvested from live test-mode payments**

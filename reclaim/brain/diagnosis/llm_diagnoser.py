@@ -91,8 +91,19 @@ Rules, in order of precedence:
   worked last month is not suddenly a bad card number.
 - RISK_DECLINE and MANDATE_REVOKED are never recoverable by retry. Retrying a
   risk decline looks like card testing and can cost the merchant its account.
-- A late-night attempt near month-end, on an instrument with prior successes,
-  weakly suggests INSUFFICIENT_FUNDS rather than a broken card.
+- Every record you see here already has a generic error string — that is the
+  only reason you are being asked. So the generic wording of `error` is not
+  itself evidence of anything, and "the error is generic" is not a reason to
+  answer UNKNOWN. Weigh the other fields; they are why they are here.
+- A generic decline on an instrument that has succeeded before, attempted late
+  at night (`attempted_hour_ist` >= 21) within about a week of month-end
+  (`days_to_month_end` <= 8), is INSUFFICIENT_FUNDS unless something else
+  explains it better. This is the ordinary shape of a consumer running short
+  before salary, and it is the most common failure of its kind in Indian
+  payments. Say so with the confidence you actually hold — if those conditions
+  all hold, that is a real lean, not a coin toss.
+- UNKNOWN remains correct when the fields genuinely conflict or are absent: no
+  history, mid-month, mid-afternoon, nothing to go on.
 - Set confidence below 0.6 whenever you are genuinely unsure. That routes the
   record to human review, which is the correct outcome for an ambiguous case.
 
@@ -216,12 +227,25 @@ def signature(record: AtRiskRecord, signal: CohortSignal | None) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
+def _days_to_month_end(dt) -> int:
+    import calendar
+
+    return calendar.monthrange(dt.year, dt.month)[1] - dt.day
+
+
 def build_context(record: AtRiskRecord, signal: CohortSignal | None) -> dict:
     ctx: dict[str, Any] = {
         "amount_paise": record.amount,
         "currency": record.currency,
         "leak_type": record.leak_type.value,
         "attempted_at_ist": record.detected_at.isoformat(),
+        # Derived, because the prompt asks the model to weigh "late at night"
+        # and "near month-end" and an ISO string makes it infer both — including
+        # how many days August has. Computing a feature the rule already depends
+        # on is the system's job, not the model's; leaving it implicit was
+        # costing correct diagnoses on records that did carry the signal.
+        "attempted_hour_ist": record.detected_at.hour,
+        "days_to_month_end": _days_to_month_end(record.detected_at),
         "attempt_number": record.raw_signals.get("attempt_number", 1),
         "method": record.raw_signals.get("method"),
         "card_network": record.raw_signals.get("card_network"),

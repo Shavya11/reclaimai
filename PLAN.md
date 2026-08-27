@@ -70,7 +70,7 @@ record/schema layer.
   - `audit.log(record_id, stage, outcome, reason, payload, ...)` — append-only
 
 **Day 1 checkpoint:** `python -m reclaim.cli detect` prints
-`120 at-risk records, ₹5,84,300 at risk`.
+`120 at-risk records, ₹8,24,984 at risk`.
 
 ---
 
