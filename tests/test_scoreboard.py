@@ -259,14 +259,48 @@ def test_a_missing_record_is_a_404_not_a_crash(client):
     assert client.get("/api/records/REC_nope/audit").status_code == 404
 
 
+def _wait_until_idle(client, timeout: float = 180.0) -> dict:
+    """Block until the API says it has stopped working.
+
+    Both write endpoints answer 202 and finish on a thread, because a tick
+    re-diagnoses through a rate-limited model tier and a request that takes two
+    minutes is one a proxy will cut before it returns.
+    """
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        health = client.get("/api/health").json()
+        if not health["seeding"]:
+            return health
+        time.sleep(0.25)
+    raise AssertionError(f"still {health['seeding_stage']} after {timeout}s")
+
+
 def test_the_tick_endpoint_moves_the_clock(client):
     run_batch(dry_run=True)
     before = client.get("/api/health").json()["clock"]
 
     response = client.post("/api/tick?advance=24h")
 
-    assert response.status_code == 200
-    assert response.json()["clock"] > before
+    assert response.status_code == 202, "the work is accepted, not awaited"
+    assert response.json()["started"] is True
+    assert _wait_until_idle(client)["clock"] > before
+    client.post("/api/clock/reset")
+
+
+def test_a_second_write_while_one_is_running_is_refused(client):
+    """Two arcs walking the same database interleave their ticks and produce a
+    scoreboard that is the sum of two different stories."""
+    first = client.post("/api/tick?advance=24h")
+    assert first.status_code == 202
+
+    second = client.post("/api/run-batch")
+    assert second.status_code in (202, 409)
+    if second.status_code == 409:
+        assert "busy" in second.json()["detail"].lower()
+
+    _wait_until_idle(client)
     client.post("/api/clock/reset")
 
 

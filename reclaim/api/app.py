@@ -13,6 +13,7 @@ on the dashboard and the same number in a terminal cannot drift apart.
 """
 
 import logging
+import threading
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -46,58 +47,105 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
+# One background worker at a time, and one place that says whether it is
+# running.
+#
+# The dashboard used to infer "still filling in" from the shape of the
+# scoreboard, and that inference cannot tell an empty database about to be
+# seeded from an empty database that is finished. A visitor arriving in the
+# first second of a cold boot therefore got a settled-looking row of zeroes and
+# no reason to wait. The API now simply says which it is.
+_seed_lock = threading.Lock()
+_seed_state: dict[str, Any] = {"active": False, "stage": None, "started_at": None}
+
+
+def _set_stage(stage: str | None, *, active: bool) -> None:
+    _seed_state["stage"] = stage
+    _seed_state["active"] = active
+    if not active:
+        _seed_state["started_at"] = None
+    elif _seed_state["started_at"] is None:
+        _seed_state["started_at"] = clock.now().isoformat()
+
+
+def _in_background(name: str, work) -> bool:
+    """Run `work` on a thread. False when one is already running.
+
+    The lock is the whole point: two arcs walking the same database at once
+    interleave their ticks and produce a scoreboard that is the sum of two
+    different stories.
+    """
+    if not _seed_lock.acquire(blocking=False):
+        return False
+
+    def wrapper() -> None:
+        try:
+            work()
+            log.info("%s complete", name)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("%s failed: %s", name, exc)
+        finally:
+            _set_stage(None, active=False)
+            _seed_lock.release()
+
+    _set_stage(name, active=True)
+    threading.Thread(target=wrapper, name=name, daemon=True).start()
+    return True
+
+
+def _walk_arc(*, reset: bool, seed: int | None = None) -> None:
+    """The whole demo arc, not just the first batch.
+
+    A single batch fires only the actions due immediately, which lands the
+    scoreboard around 24% recovered while every number published about this
+    project says 31.7%. A reader comparing the two has no way to tell which one
+    is lying, and is right not to trust either.
+    """
+    from ..db import reset_database
+    from ..runner import DEMO_ARC, run_batch, tick
+
+    if reset:
+        reset_database()
+        clock.reset()
+
+    llm = _llm()
+    log.info("walking the demo arc (layer 2 %s)", "on" if llm else "off")
+    _set_stage("running the batch", active=True)
+    run_batch(seed=seed, llm=llm, dry_run=None)
+    for step in DEMO_ARC + ["+7d"] * 3:
+        _set_stage(f"advancing {step}", active=True)
+        tick(advance=step, seed=seed, llm=llm, dry_run=None)
+
+
 def _seed_if_empty() -> None:
-    """Populate a cold deployment, once, in the background.
+    """Populate a cold deployment, once.
 
     Guarded on the table being empty rather than on a flag alone: a restart must
     not wipe a batch somebody is presently demonstrating, and on a host with a
-    persistent disk this becomes a no-op after the first boot. Failure is logged
-    and swallowed — an API that will not start because it could not generate
-    demo data is worse than one serving zeroes.
+    persistent disk this becomes a no-op after the first boot.
 
-    It walks the WHOLE demo arc, not just the first batch. A single batch only
-    fires the actions that are due immediately, which lands the scoreboard at
-    roughly 24% recovered while every number published about this project says
-    31.7%. A reader opening the deployed link and finding figures that disagree
-    with the README has no way to tell which one is lying, and is right not to
-    trust either.
-
-    On a thread, because the arc takes ~25 seconds and a health check that has
-    to wait that long is a deploy that gets marked failed. The scoreboard fills
-    in as the ticks land; the API answers from the first moment.
-
-    It diagnoses with layer 2, when a key is configured. Omitting it was a quiet
-    way to publish the wrong number: the batch completed, the page looked right,
-    and 38 records sat in UNKNOWN because nothing had asked the model. Setting
-    GEMINI_API_KEY on the host could not fix that on its own, which is the worst
-    kind of bug - the configuration says one thing and the output says another.
-
-    With layer 2 on, the arc takes about two minutes rather than twenty-five
-    seconds, because the free tier is paced. It also spends ~28 of a 500/day
-    quota per cold boot, and a free instance cold-boots whenever it has been
-    idle 15 minutes.
+    The committed snapshot is tried first and is the normal path — it restores
+    the settled arc in about a second, spends no LLM quota, and lands on exactly
+    the published numbers because it was produced by this same runner. Walking
+    the arc live is the fallback for a checkout without one: correct, but a
+    hundred seconds during which the page has nothing to show.
     """
-    import threading
-
     from ..repository import count_records
 
-    def work() -> None:
-        try:
-            if count_records():
-                return
-            from ..runner import DEMO_ARC, run_batch, tick
+    try:
+        if count_records():
+            return
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not count records at boot: %s", exc)
+        return
 
-            llm = _llm()
-            log.info("empty database at boot — seeding and walking the demo arc "
-                     "(layer 2 %s)", "on" if llm else "off")
-            run_batch(llm=llm, dry_run=None)
-            for step in DEMO_ARC + ["+7d"] * 3:
-                tick(advance=step, llm=llm, dry_run=None)
-            log.info("boot seed complete")
-        except Exception as exc:  # noqa: BLE001
-            log.warning("boot seed failed, serving an empty scoreboard: %s", exc)
+    from .. import snapshot
 
-    threading.Thread(target=work, name="boot-seed", daemon=True).start()
+    if snapshot.restore() is not None:
+        return
+
+    log.info("no usable snapshot — seeding the slow way")
+    _in_background("seeding a cold instance", lambda: _walk_arc(reset=False))
 
 
 app = FastAPI(title="ReclaimAI", version="1.0", lifespan=_lifespan,
@@ -163,7 +211,25 @@ def health() -> dict[str, Any]:
         "model": settings.anthropic_model,
         "clock": clock.now().isoformat(),
         "time_travelled": clock.is_travelled(),
+        # The dashboard polls on this rather than guessing from the scoreboard.
+        "seeding": bool(_seed_state["active"]),
+        "seeding_stage": _seed_state["stage"],
+        "seeding_since": _seed_state["started_at"],
+        "snapshot": _snapshot_header(),
     }
+
+
+def _snapshot_header() -> dict[str, Any] | None:
+    """What the committed snapshot claims, so a deployment serving the wrong
+    numbers can be caught by reading /api/health instead of by squinting at the
+    dashboard."""
+    from .. import snapshot
+
+    payload = snapshot.read()
+    if payload is None:
+        return None
+    return {"built_at": payload["built_at"], "layer_2": payload["layer_2"],
+            **payload["scoreboard"]}
 
 
 @app.get("/api/scoreboard")
@@ -433,33 +499,60 @@ def diagnosis_accuracy(seed: int = Query(default=None)) -> dict[str, Any]:
 # --- the three write endpoints the demo drives -------------------------------
 
 
-@app.post("/api/run-batch")
+@app.post("/api/run-batch", status_code=202)
 def api_run_batch(seed: int = Query(default=None),
                   reset: bool = Query(default=True)) -> dict[str, Any]:
-    from ..db import reset_database
-    from ..runner import run_batch
+    """Reset and walk the WHOLE arc, in the background.
 
-    if reset:
-        reset_database()
-        clock.reset()
-    result = run_batch(seed=seed if seed is not None else settings.seed,
-                       llm=_llm(), dry_run=None)
-    return {"clock": clock.now().isoformat(), "result": result.as_dict()}
+    Two things used to go wrong here. It ran a single batch, so the button whose
+    job is to demonstrate the agent replaced the published numbers with worse
+    ones. And it did the work inside the request, which with layer 2 on is a
+    hundred seconds of a spinner — long enough that Render's proxy may cut the
+    connection before it ever returns, leaving a button that spins forever over
+    a batch that actually succeeded.
+
+    So it returns immediately and the dashboard watches `seeding` in
+    /api/health, which is also what a cold boot does. One mechanism, not two.
+    """
+    started = _in_background(
+        "running the full arc",
+        lambda: _walk_arc(reset=reset,
+                          seed=seed if seed is not None else settings.seed))
+    if not started:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Already busy: {_seed_state['stage']}.")
+    return {"started": True, "clock": clock.now().isoformat(),
+            "seeding": True, "seeding_stage": _seed_state["stage"]}
 
 
-@app.post("/api/tick")
+@app.post("/api/tick", status_code=202)
 def api_tick(advance: str = Query(default="24h")) -> dict[str, Any]:
     """Time travel. Advance the clock and let deferred work land — the only way
-    a retry scheduled for the 1st is observable inside a five-minute demo."""
-    from ..brain.policy.schedule import ScheduleError
+    a retry scheduled for the 1st is observable inside a five-minute demo.
+
+    Also backgrounded: a tick re-diagnoses everything the agent still owns, and
+    on a rate-limited free LLM tier that is tens of seconds. The token is
+    resolved here, before anything is spawned, so a bad one is still a 400 and
+    never a silently accepted no-op.
+    """
+    from ..brain.policy.schedule import ScheduleError, resolve
     from ..runner import tick
 
     try:
-        result, at = tick(advance=advance, llm=_llm(), dry_run=None)
+        resolve(advance, clock.now())
     except ScheduleError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"clock": at.isoformat(), "advanced": advance,
-            "result": result.as_dict()}
+
+    started = _in_background(
+        f"advancing {advance}",
+        lambda: tick(advance=advance, llm=_llm(), dry_run=None))
+    if not started:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Already busy: {_seed_state['stage']}.")
+    return {"started": True, "advanced": advance,
+            "clock": clock.now().isoformat(), "seeding": True}
 
 
 @app.post("/api/kill-switch")

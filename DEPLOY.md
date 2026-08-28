@@ -69,8 +69,18 @@ curl https://reclaimai-api.onrender.com/api/health
 curl https://reclaimai-api.onrender.com/api/scoreboard
 ```
 
-`/api/health` should report `ok: true`. `/api/scoreboard` should show 120
-records — `SEED_ON_BOOT` generates a batch because the disk starts empty.
+`/api/health` should report `ok: true` and `seeding: false`. `/api/scoreboard`
+should show 120 records and ₹1,22,347 recovered on the very first request —
+`SEED_ON_BOOT` restores `fixtures/demo_snapshot.json.gz`, which is the settled
+arc frozen by `reclaim snapshot`. It takes about a second, calls nothing, and
+lands on the published numbers because the same runner produced both.
+
+Rebuild and recommit the snapshot whenever the policy table, the guardrails or
+the fixture change, or the deployment will keep serving the old story:
+
+```bash
+python -m reclaim.cli snapshot
+```
 
 **The free instance has no persistent disk.** The database is at `/tmp` and is
 wiped on every restart; a new batch is generated on the next boot. That is fine
@@ -174,8 +184,16 @@ Redeploy on Vercel.
 **First request takes 40 seconds.** Free instance cold start. Expected. Do not
 demo from here.
 
-**Scoreboard is empty after a restart.** Ephemeral disk. `SEED_ON_BOOT` rebuilds
-on the next boot, or `POST /api/run-batch`.
+**Scoreboard is empty after a restart.** Ephemeral disk, and the snapshot did
+not load. Check `/api/health` — `snapshot: null` means the file is missing from
+the deployed commit, and the API has fallen back to walking the arc live, which
+takes ~100 seconds and reports `seeding: true` while it does. `POST
+/api/run-batch` forces the same rebuild.
+
+**A button spins and nothing happens.** It shouldn't any more: `/api/run-batch`
+and `/api/tick` both answer `202` immediately and do the work on a thread, and
+the dashboard follows `seeding` in `/api/health` rather than guessing from the
+scoreboard. A `409` means a batch is already running — wait for it.
 
 **Webhook deliveries show as refused.** Secret mismatch — see step 3.
 

@@ -306,12 +306,24 @@ dashboard. [DEPLOY.md](DEPLOY.md) is the step-by-step.
 receiver at **https://reclaimai-api.onrender.com**.
 
 The deployed scoreboard reproduces the local one to the rupee — `₹1,22,347`
-recovered, 36.7% of records, 2.68 contacts per recovery — **provided
-`GEMINI_API_KEY` is set on the API host**. Without it the deployment still runs,
-but layer 2 is off there and it reports `₹91,046` across 31 records, with 38 in
-`UNKNOWN` instead of 3. Same code, same seed, different diagnosis depth. The
-figure above is the seeded
-batch doing what it claims on a machine that has never seen this repo before.
+recovered, 36.7% of records, 2.68 contacts per recovery — on the first request,
+from a cold instance, with no key configured at all. It is restored from
+`fixtures/demo_snapshot.json.gz`: the settled arc frozen by `reclaim snapshot`,
+walked once with layer 2 on by the same runner that produces the local numbers.
+Not a hand-written fixture, which could drift away from the code; the actual
+output of the actual pipeline, committed.
+
+This exists because the honest alternative was worse. Rebuilding the batch live
+on boot is ~100 seconds of a rate-limited free model tier, and a free instance
+cold-boots whenever it has been idle fifteen minutes — so a visitor arriving in
+that window met a truthful, useless `₹0` and had no way to know it meant *not
+yet* rather than *nothing was recovered*.
+
+`GEMINI_API_KEY` now buys the *live* buttons rather than the first impression:
+with it, Run batch and the clock chips re-diagnose for real and land back on
+`₹1,22,347`; without it they re-run on layer 1 alone and land `₹91,046` across
+31 records, with 38 in `UNKNOWN` instead of 3. Same code, same seed, different
+diagnosis depth.
 
 ```
    Vercel  ──────────►  Render  ◄──────────  Razorpay
@@ -324,9 +336,13 @@ and a genuine Razorpay delivery. Render's free instances cold-start in 30-50
 seconds, so drive the demo locally with `reclaim serve` and let the deployment
 receive.
 
-`SEED_ON_BOOT` generates one batch if the database is empty at startup, guarded on
-the table being empty rather than the flag alone, so a restart cannot wipe a batch
-somebody is presently demonstrating. `CORS_ORIGINS` must name the Vercel URL
+`SEED_ON_BOOT` restores the snapshot if the database is empty at startup, guarded
+on the table being empty rather than the flag alone, so a restart cannot wipe a
+batch somebody is presently demonstrating. Both write endpoints answer `202` and
+work on a thread — a tick re-diagnoses through a paced model tier, and a request
+that takes two minutes is one a proxy will cut before it returns — so the
+dashboard follows `seeding` in `/api/health` instead of inferring progress from
+the shape of the scoreboard. `CORS_ORIGINS` must name the Vercel URL
 exactly — the dashboard and the API are different origins, and the browser blocks
 every call otherwise.
 

@@ -35,8 +35,13 @@ services:
         value: "3.11.9"
 
       # A cold instance starts with an empty disk, and an empty disk serves an
-      # empty dashboard. Guarded on the table being empty rather than on this
-      # flag alone, so a restart cannot wipe a batch someone is demonstrating.
+      # empty dashboard. Boot restores the committed snapshot
+      # (fixtures/demo_snapshot.json.gz) in about a second — no network call, no
+      # LLM quota, and the exact numbers the README publishes, because the same
+      # runner produced both. Guarded on the table being empty rather than on
+      # this flag alone, so a restart cannot wipe a batch someone is
+      # demonstrating. Rebuild the snapshot with `reclaim snapshot` whenever the
+      # policy table, the guardrails or the fixture change.
       - key: SEED_ON_BOOT
         value: "true"
 
@@ -84,11 +89,15 @@ services:
 
       # Layer 2 runs on whichever of these is set, Anthropic first. Leave both
       # blank and the batch still completes — the fallback chain sends the
-      # ambiguous records to a human instead. That is a supported mode, but the
-      # deployed scoreboard then reports ~₹91,046 recovered against the
-      # ₹1,22,347 in the README, because 38 records fall to UNKNOWN rather than
-      # 3. A reader comparing the two has no way to tell which is lying.
-      # Set GEMINI_API_KEY here to make the deployment match what is published.
+      # ambiguous records to a human instead.
+      #
+      # The dashboard a visitor first sees no longer depends on this: it is
+      # restored from a snapshot that was built WITH layer 2, so the published
+      # numbers hold either way. What a key buys is the live buttons — Run batch
+      # and the clock chips re-diagnose for real, and without one they re-run
+      # the arc on layer 1 alone and land ~₹91,046 against the ₹1,22,347 the
+      # page loaded with. Set GEMINI_API_KEY so pressing a button agrees with
+      # what the page already says.
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL

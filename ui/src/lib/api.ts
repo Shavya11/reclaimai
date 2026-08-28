@@ -6,17 +6,66 @@
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
+// A free instance is asleep until something knocks, and the knock itself is
+// what wakes it — so the first request after an idle period can take the better
+// part of a minute. Without a timeout that request hangs the page forever on a
+// spinner; with too short a timeout it gives up on an API that was about to
+// answer. 75 seconds is longer than a cold start and shorter than a visitor's
+// patience, and the caller retries either way.
+const READ_TIMEOUT_MS = 75_000;
+
+// Writes only start the work now — the API answers 202 and the dashboard polls.
+// Nothing here should ever be slow.
+const WRITE_TIMEOUT_MS = 20_000;
+
+class HttpError extends Error {
+  constructor(readonly status: number, readonly path: string, readonly detail?: string) {
+    super(detail ? `${path} -> ${status}: ${detail}` : `${path} -> ${status}`);
+  }
+}
+
+async function request<T>(path: string, init: RequestInit, timeout: number): Promise<T> {
+  // AbortSignal.timeout is not in every browser a demo might be opened in, so
+  // fall back to a controller rather than throwing on the feature test itself.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(`${BASE}${path}`, {
+      ...init,
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      let detail: string | undefined;
+      try {
+        detail = (await response.json())?.detail;
+      } catch {
+        // A proxy error page is not JSON. The status code is the message.
+      }
+      throw new HttpError(response.status, path, detail);
+    }
+    return (await response.json()) as T;
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new Error(`${path} timed out after ${Math.round(timeout / 1000)}s`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function get<T>(path: string): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, { cache: "no-store" });
-  if (!response.ok) throw new Error(`${path} -> ${response.status}`);
-  return response.json() as Promise<T>;
+  return request<T>(path, {}, READ_TIMEOUT_MS);
 }
 
 export async function post<T>(path: string): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, { method: "POST" });
-  if (!response.ok) throw new Error(`${path} -> ${response.status}`);
-  return response.json() as Promise<T>;
+  return request<T>(path, { method: "POST" }, WRITE_TIMEOUT_MS);
 }
+
+// 409 means a batch is already running — the request was understood and
+// refused, which is information, not a failure to surface as a red banner.
+export const isBusy = (e: unknown) => e instanceof HttpError && e.status === 409;
 
 export type CauseLine = {
   root_cause: string;
@@ -166,8 +215,25 @@ export type Comparison = {
   };
 };
 
+export type SnapshotHeader = {
+  built_at: string;
+  layer_2: boolean;
+  records: number;
+  recovered_paise: number;
+  recovered_display: string;
+  records_recovered: number;
+  recovery_rate: number;
+};
+
 export type Health = {
   ok: boolean;
+  // The one field the dashboard could never infer for itself: whether the API
+  // is presently building a batch. Optional, because an older API deployment
+  // does not send it and the page must still work against one.
+  seeding?: boolean;
+  seeding_stage?: string | null;
+  seeding_since?: string | null;
+  snapshot?: SnapshotHeader | null;
   dry_run: boolean;
   autopilot_enabled: boolean;
   razorpay_credentials: boolean;

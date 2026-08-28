@@ -10,7 +10,7 @@ import sys
 from collections import Counter
 
 from . import console
-from .config import settings
+from .config import ROOT, settings
 from .db import init_db
 from .detectors import REGISTRY, detect_all
 from .money import format_inr, format_inr_short
@@ -586,6 +586,49 @@ def cmd_demo(args) -> int:
     return 0
 
 
+def cmd_snapshot(args) -> int:
+    """Walk the whole arc offline and freeze it for a cold deployment to restore.
+
+    The free instance this deploys to has an ephemeral disk, so every cold boot
+    starts empty; rebuilding the batch live is ~100 seconds of a rate-limited
+    free LLM tier, and a visitor arriving inside that window sees ₹0 recovered.
+    Committing the settled result makes the boot instant and the numbers exactly
+    the ones the README publishes — because the same runner produced both.
+    """
+    from . import snapshot
+
+    llm = _diagnoser(args)
+    if llm is None and not args.no_llm:
+        print(f"{DIM}No LLM key configured.{OFF} A snapshot built without "
+              f"layer 2 publishes the fallback numbers under the headline "
+              f"ones. Pass --no-llm to build one anyway.")
+        return 1
+
+    print()
+    print(f"{BOLD}BUILDING DEMO SNAPSHOT{OFF}  {DIM}seed={args.seed}, "
+          f"layer 2 {'on' if llm else 'off'}{OFF}")
+    print(f"{DIM}  the whole arc, once, so the deployment never has to{OFF}")
+    print()
+
+    payload = snapshot.build(llm=llm, seed=args.seed,
+                             extra_ticks=args.extra_ticks)
+
+    size = snapshot.PATH.stat().st_size / 1024
+    board = payload["scoreboard"]
+    rows = sum(len(t) for t in payload["tables"].values())
+    print(f"  {'records':<20} {board['records']}")
+    print(f"  {'recovered':<20} {GREEN}{board['recovered_display']}{OFF} "
+          f"({board['records_recovered']} records, "
+          f"{board['recovery_rate'] * 100:.1f}% by value)")
+    print(f"  {'rows frozen':<20} {rows}")
+    print(f"  {'written':<20} {snapshot.PATH.relative_to(ROOT)} ({size:.0f} KB)")
+    print()
+    print(f"{DIM}Commit it. Boot restores it in about a second, with no network "
+          f"call and no quota spent.{OFF}")
+    print()
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
 
@@ -704,6 +747,7 @@ def main(argv: list[str] | None = None) -> int:
         ("clock", cmd_clock, "show or reset the demo clock"),
         ("baseline", cmd_baseline, "naive strategy over the same batch"),
         ("demo", cmd_demo, "the whole arc: reset, run, tick, score, compare"),
+        ("snapshot", cmd_snapshot, "freeze the settled arc for a cold deployment"),
         ("serve", cmd_serve, "run the API and dashboard"),
     ]:
         sp = subs.add_parser(name, help=helptext)
@@ -750,8 +794,12 @@ def main(argv: list[str] | None = None) -> int:
     sv.add_argument("--port", type=int, default=8000)
     sv.add_argument("--reload", action="store_true")
 
+    subs.choices["snapshot"].add_argument(
+        "--extra-ticks", type=int, default=3,
+        help="additional +7d ticks so every deferred action lands")
+
     for name in ("diagnose", "plan", "run-batch", "prove-idempotency", "tick",
-                 "demo", "baseline"):
+                 "demo", "baseline", "snapshot"):
         subs.choices[name].add_argument("--seed", type=int, default=settings.seed)
         subs.choices[name].add_argument("--no-llm", action="store_true",
                                         help="skip layer 2 and prove the batch still completes")

@@ -14,6 +14,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -25,6 +26,7 @@ import {
   Scoreboard,
   fmtTime,
   get,
+  isBusy,
   post,
 } from "@/lib/api";
 import { Button, Card, Empty, Skeleton } from "@/components/ui";
@@ -56,6 +58,10 @@ const TICKS: Array<[string, string]> = [
   ["+7d", "+7d"],
 ];
 
+// Long enough to cover a full arc walked live (~100s at a 3s poll) plus a slow
+// cold start, and short enough that a page left open overnight stops knocking.
+const MAX_POLLS = 140;
+
 const PAGE_TITLE: Record<Tab, [string, string]> = {
   dashboard: [
     "Dashboard",
@@ -86,9 +92,23 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [queueFilter, setQueueFilter] = useState("all");
+  // A cold instance answers before it has anything to answer with, and an empty
+  // database renders as a settled row of zeroes. This used to be inferred from
+  // the shape of the scoreboard, and the inference had a hole exactly where it
+  // mattered: during the first seconds of a boot `records` is 0, which the test
+  // read as "nothing to wait for" — so it hid the banner, stopped polling, and
+  // left ₹0 on screen as though the agent had recovered nothing. The API now
+  // reports it outright.
+  const [seeding, setSeeding] = useState(false);
   // null = we have not heard back yet. Distinguishing that from `false` is the
   // whole point: an API that never answered is not an API that said no.
   const [connected, setConnected] = useState<boolean | null>(null);
+  // Bumped after every attempt, successful or not, so the poll effect below
+  // re-arms itself. Without it a failed request breaks the retry chain — which
+  // is how one slow cold start became a page stuck on skeletons forever.
+  const [beat, setBeat] = useState(0);
+  const failures = useRef(0);
+  const polls = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -104,9 +124,18 @@ export default function Page() {
       setHealth(h);
       setError(null);
       setConnected(true);
+      failures.current = 0;
+      // The heuristic survives only as a fallback for an API deployed before
+      // /api/health grew the flag. It is wrong in the first seconds of a boot,
+      // which is why it is no longer the primary answer.
+      setSeeding(h.seeding ?? (b.records > 0 && b.interventions === 0));
     } catch (e) {
+      failures.current += 1;
       setError(String(e));
       setConnected(false);
+      setSeeding(false);
+    } finally {
+      setBeat((n) => n + 1);
     }
   }, []);
 
@@ -114,13 +143,51 @@ export default function Page() {
     refresh();
   }, [refresh]);
 
+  // One timer, one rule: keep asking while there is a reason to. There are two
+  // reasons — we have not had a good answer yet, or the API says it is still
+  // building the batch — and both end on their own.
+  //
+  // A cold free instance can take most of a minute just to wake, so giving up
+  // after the first failure is giving up on an API that was about to answer.
+  // It backs off when nothing is home and stays brisk while a batch is landing.
+  useEffect(() => {
+    const waiting = connected !== true || seeding;
+    if (!waiting) {
+      polls.current = 0;
+      return;
+    }
+    if (polls.current > MAX_POLLS) return;
+    const delay =
+      connected === true
+        ? 3000
+        : Math.min(3000 * 2 ** Math.min(failures.current, 3), 24000);
+    const id = setTimeout(() => {
+      polls.current += 1;
+      refresh();
+    }, delay);
+    return () => clearTimeout(id);
+  }, [beat, connected, seeding, refresh]);
+
   const act = async (label: string, path: string) => {
     setBusy(label);
     try {
       await post(path);
+      // The API accepted the work; it has not done it. Raise the banner now
+      // rather than waiting for a poll to notice, so a button that started a
+      // two-minute arc does not look like a button that did nothing.
+      setSeeding(true);
+      polls.current = 0;
+      setError(null);
       await refresh();
     } catch (e) {
-      setError(String(e));
+      // A refusal because something else is already running is information,
+      // not a failure worth a red banner.
+      if (isBusy(e)) {
+        setSeeding(true);
+        polls.current = 0;
+      } else {
+        setError(String(e));
+      }
     } finally {
       setBusy(null);
     }
@@ -194,7 +261,7 @@ export default function Page() {
                   `/api/kill-switch?enabled=${health?.autopilot_enabled ? "false" : "true"}`,
                 )
               }
-              disabled={!!busy || !health}
+              disabled={!!busy || seeding || !health}
               title="Guardrail #1 — blocks every action while off"
               className={`flex w-full cursor-pointer items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-[13px] font-medium transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50 ${
                 !health || health.autopilot_enabled
@@ -248,11 +315,12 @@ export default function Page() {
             <Button
               variant="primary"
               icon={<IconPlay className="h-3.5 w-3.5" />}
-              busy={busy === "run"}
+              busy={busy === "run" || seeding}
               onClick={() => act("run", "/api/run-batch")}
-              disabled={!!busy}
+              disabled={!!busy || seeding}
+              title="Reset and walk the whole demo arc from t=0. Takes about two minutes."
             >
-              {busy === "run" ? "Running…" : "Run batch"}
+              {busy === "run" || seeding ? "Running…" : "Run batch"}
             </Button>
           </div>
         </header>
@@ -301,7 +369,7 @@ export default function Page() {
                 key={value}
                 variant="chip"
                 busy={busy === value}
-                disabled={!!busy}
+                disabled={!!busy || seeding}
                 onClick={() =>
                   act(value, `/api/tick?advance=${encodeURIComponent(value)}`)
                 }
@@ -318,6 +386,8 @@ export default function Page() {
         </div>
 
         {connected === false && <Disconnected />}
+
+        {connected && seeding && <Warming stage={health?.seeding_stage} />}
 
         {/* An action that failed while the API is otherwise reachable — a tick
             that 400d, say. Dropping this would make a failed button click look
@@ -531,6 +601,39 @@ function LoadingBoard() {
       <Skeleton className="h-[92px] md:col-span-12" />
       <Skeleton className="h-[380px] md:col-span-12 lg:col-span-8" />
       <Skeleton className="h-[380px] md:col-span-12 lg:col-span-4" />
+    </div>
+  );
+}
+
+function Warming({ stage }: { stage?: string | null }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-start gap-2.5 rounded-3xl border border-amber/30 bg-amberwash px-4 py-3.5 text-[12px]"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        className="mt-px h-4 w-4 shrink-0 animate-spin text-amber"
+      >
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" opacity="0.25" />
+        <path d="M12 3a9 9 0 0 1 9 9" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+      </svg>
+      <div className="min-w-0">
+        <p className="font-semibold text-amber">
+          {stage ? `Working — ${stage}.` : "Working."} These numbers are still
+          filling in.
+        </p>
+        <p className="mt-1 text-muted">
+          The agent is walking the demo arc: 120 records detected, every one
+          diagnosed, then the whole schedule replayed so deferred work lands.
+          With layer 2 on that is about two minutes, because a free model tier
+          is paced. Nothing is missing — the zeroes below mean{" "}
+          <em>not yet</em>, not <em>nothing was recovered</em>.
+        </p>
+        <p className="mt-1 text-dim">Refreshing automatically.</p>
+      </div>
     </div>
   );
 }
