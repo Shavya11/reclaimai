@@ -268,6 +268,19 @@ export type QueueItem = {
   amount_paise: number;
   root_cause: string | null;
   raised_at: string | null;
+  // Optional because a deployed API older than this build does not send them,
+  // and a type that promises otherwise pushes the check somewhere it will be
+  // forgotten. 1 blocking (agent is idle awaiting a yes/no), 2 needs judgement,
+  // 3 for the record (policy already decided; nothing to do).
+  tier?: 1 | 2 | 3;
+  tier_label?: string;
+  // Money actually reachable, not face value: amount x P(recover | cause) x
+  // attempt decay x how fast this kind of value evaporates.
+  ev_paise?: number;
+  ev_display?: string;
+  ev_is_estimate?: boolean;
+  days_waiting?: number;
+  leak_type?: string;
 };
 
 export type GuardrailFeed = {

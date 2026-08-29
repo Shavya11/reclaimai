@@ -31,7 +31,7 @@ from typing import Any
 from sqlalchemy import desc
 from sqlalchemy.exc import IntegrityError
 
-from .. import audit
+from .. import audit, human_queue
 from ..db import (
     AtRiskRecordRow,
     InterventionRow,
@@ -211,19 +211,27 @@ def handle(
             intervention.result = RESULT_RECOVERED
             intervention.recovered_amount = amount
             intervention.settled_at = now()
+            closed_rows = 0
             if record is not None:
                 record.state = RecordState.RECOVERED.value
                 record.next_action_at = None
+                # The money arrived, so nobody needs to be sent to collect it.
+                # Guardrail 11 already stops the AGENT chasing a paid record;
+                # this is the same rule applied to a person's afternoon.
+                closed_rows = human_queue.resolve(record.id, session=session)
             session.commit()
 
             late = (f" Paid after this attempt was recorded as {was}."
                     if was else "")
+            unqueued = (f" Closed {closed_rows} open human-queue row"
+                        f"{'s' if closed_rows != 1 else ''}." if closed_rows else "")
             reason = (
                 f"{event.event_type} on {event.refs[0] if event.refs else '?'} "
                 f"traced to intervention {intervention.id} "
                 f"({intervention.action_type}, attempt "
                 f"{intervention.attempt_number}, policy "
                 f"{intervention.policy_ref}). Record marked RECOVERED.{late}"
+                f"{unqueued}"
             )
             audit.log(intervention.record_id, Stage.OUTCOME, RESULT_RECOVERED,
                       reason,

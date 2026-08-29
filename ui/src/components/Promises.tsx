@@ -100,15 +100,15 @@ export default function Promises({ onOpenRecord }: { onOpenRecord?: (id: string)
             unpaid — run the arc with a model available.
           </Empty>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="-mx-5 overflow-x-auto">
             <table className="w-full min-w-[760px] text-[13px]">
               <thead>
                 <tr className="border-b border-line text-[11px] uppercase tracking-wide text-dim">
-                  <th className="py-2 text-left font-medium">Record</th>
-                  <th className="py-2 text-left font-medium">State</th>
-                  <th className="py-2 text-right font-medium">Amount</th>
-                  <th className="py-2 text-left font-medium">Promised for</th>
-                  <th className="py-2 text-left font-medium">What they said</th>
+                  <th className="px-5 py-2 text-left font-medium">Record</th>
+                  <th className="px-2 py-2 text-left font-medium">State</th>
+                  <th className="px-2 py-2 text-right font-medium">Amount</th>
+                  <th className="px-2 py-2 text-left font-medium">Promised for</th>
+                  <th className="px-5 py-2 text-left font-medium">What they said</th>
                 </tr>
               </thead>
               <tbody>
@@ -118,17 +118,17 @@ export default function Promises({ onOpenRecord }: { onOpenRecord?: (id: string)
                     onClick={() => onOpenRecord?.(p.record_id)}
                     className="cursor-pointer border-b border-line/60 last:border-0 hover:bg-panel2"
                   >
-                    <td className="num py-2.5 text-ink">{p.record_id}</td>
-                    <td className="py-2.5">
+                    <td className="num px-5 py-2.5 text-ink">{p.record_id}</td>
+                    <td className="px-2 py-2.5">
                       <Badge tone={STATE_TONE[p.state] ?? "plain"} title={STATE_MEANING[p.state]}>
                         {p.state.toLowerCase()}
                       </Badge>
                     </td>
-                    <td className="num py-2.5 text-right text-muted">{p.amount_display}</td>
-                    <td className="num py-2.5 text-muted">
+                    <td className="num px-2 py-2.5 text-right text-muted">{p.amount_display}</td>
+                    <td className="num px-2 py-2.5 text-muted">
                       {p.promised_for ? fmtTime(p.promised_for) : "—"}
                     </td>
-                    <td className="max-w-[340px] py-2.5">
+                    <td className="max-w-[340px] px-5 py-2.5">
                       <p className="truncate text-muted" title={p.reply_text}>
                         {p.reply_text}
                       </p>

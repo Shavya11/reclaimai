@@ -229,6 +229,39 @@ def _promise_transitions_are_closed() -> Check:
                  f"resolution dated")
 
 
+def _no_settled_record_still_sits_in_the_queue() -> Check:
+    """A record that recovered or was closed must not still be on a person's
+    list.
+
+    Guardrail 11 stops the AGENT chasing money that already arrived. This is the
+    same rule one layer up: nothing should send a PERSON to collect it either.
+    The column to close these rows existed from Day 1 and nothing wrote to it,
+    which is exactly the kind of gap that shows up as somebody working a case
+    that paid last week.
+    """
+    name = "no settled record is still queued for a human"
+    from .db import AtRiskRecordRow, HumanQueueRow, SessionLocal
+    from .enums import RecordState
+
+    settled = {RecordState.RECOVERED.value, RecordState.CLOSED.value}
+    with SessionLocal() as session:
+        rows = (session.query(HumanQueueRow.record_id, AtRiskRecordRow.state)
+                .join(AtRiskRecordRow,
+                      AtRiskRecordRow.id == HumanQueueRow.record_id)
+                .filter(HumanQueueRow.resolved_at.is_(None))
+                .all())
+    if not rows:
+        return Check(name, PENDING, "nothing escalated yet")
+
+    stale = sorted({rid for rid, state in rows if state in settled})
+    if stale:
+        return Check(name, FAIL,
+                     f"{len(stale)} settled record(s) still open in the queue: "
+                     f"{', '.join(stale[:4])}")
+    return Check(name, PASS,
+                 f"{len(rows)} open row(s), none of them already settled")
+
+
 # 13 in V1, plus promise_window in V2. Counted against the registry rather than
 # a literal, so a rule that exists as a file but was never registered — the one
 # way a guardrail silently does nothing — fails this check instead of passing it.
@@ -568,6 +601,7 @@ CHECKS = [
     _shipped_rules_pass_their_own_validator,
     _rule_change_log_is_append_only,
     _promise_transitions_are_closed,
+    _no_settled_record_still_sits_in_the_queue,
     _replay_is_side_effect_free,
     _dashboard_is_built,
 ]

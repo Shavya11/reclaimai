@@ -169,7 +169,11 @@ function Spinner() {
 
 /* The four numbers a judge should be able to read from across the room. The
    first one is filled rather than outlined, because "money at risk" is the
-   premise everything else answers. */
+   premise everything else answers.
+
+   It fills its grid cell and pins the caption to the bottom, so a row of these
+   shares one top edge for the numbers and one bottom edge for the cards even
+   when only some of them carry a caption. */
 export function Stat({
   label,
   value,
@@ -199,7 +203,7 @@ export function Stat({
 
   return (
     <div
-      className={`flex flex-col justify-between rounded-3xl border p-5 transition-shadow duration-200 ${
+      className={`flex h-full flex-col rounded-3xl border p-5 transition-shadow duration-200 ${
         accent
           ? "border-transparent bg-greendeep"
           : "border-line bg-panel shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-lift)]"
@@ -234,7 +238,7 @@ export function Stat({
       </p>
       {sub && (
         <p
-          className={`mt-2 text-[11px] leading-relaxed ${
+          className={`mt-auto pt-2 text-[11px] leading-relaxed ${
             accent ? "text-ondeep/70" : "text-dim"
           }`}
         >

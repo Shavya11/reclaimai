@@ -399,10 +399,10 @@ function ReplayResult({ diff }: { diff: ReplayDiff }) {
         <table className="w-full min-w-[520px] text-[13px]">
           <thead>
             <tr className="border-b border-line text-[11px] uppercase tracking-wide text-dim">
-              <th className="py-2 text-left font-medium">Metric</th>
-              <th className="py-2 text-right font-medium">As configured</th>
-              <th className="py-2 text-right font-medium">With the change</th>
-              <th className="py-2 text-right font-medium">Delta</th>
+              <th className="py-2 pr-4 text-left font-medium">Metric</th>
+              <th className="px-4 py-2 text-right font-medium">As configured</th>
+              <th className="px-4 py-2 text-right font-medium">With the change</th>
+              <th className="py-2 pl-4 text-right font-medium">Delta</th>
             </tr>
           </thead>
           <tbody>
@@ -415,11 +415,11 @@ function ReplayResult({ diff }: { diff: ReplayDiff }) {
                 delta === 0 ? null : r.good === "up" ? delta > 0 : delta < 0;
               return (
                 <tr key={r.key} className="border-b border-line/60 last:border-0">
-                  <td className="py-2 text-muted">{r.label}</td>
-                  <td className="num py-2 text-right text-muted">{fmt(before)}</td>
-                  <td className="num py-2 text-right text-ink">{fmt(after)}</td>
+                  <td className="py-2 pr-4 text-muted">{r.label}</td>
+                  <td className="num px-4 py-2 text-right text-muted">{fmt(before)}</td>
+                  <td className="num px-4 py-2 text-right text-ink">{fmt(after)}</td>
                   <td
-                    className={`num py-2 text-right font-medium ${
+                    className={`num py-2 pl-4 text-right font-medium ${
                       better === null ? "text-dim" : better ? "text-green" : "text-amber"
                     }`}
                   >

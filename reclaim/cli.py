@@ -710,6 +710,83 @@ def cmd_prove_idempotency(args) -> int:
     return 0 if dupes == 0 else 1
 
 
+def cmd_ablation(args) -> int:
+    """Is layer 2 worth its calls? The same batch, with and without it.
+
+    Prints the cost as well as the gain, and refuses to print anything when too
+    many model calls went unanswered — a rate-limited run still completes and
+    still produces a plausible-looking number, which is exactly the number that
+    ships by accident on a deadline.
+    """
+    from .experiments import ablation
+    from .money import format_inr
+
+    print(f"\n{BOLD}LAYER-2 ABLATION{OFF}  {DIM}two arcs, scratch databases, "
+          f"same seed, live diagnosis{OFF}")
+    print(f"  {DIM}this makes real model calls and takes a few minutes{OFF}\n")
+
+    result = ablation.run(seed=args.seed)
+    data = result.as_dict()
+
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 1 if data["void"] else 0
+
+    if data["void"]:
+        print(f"  {RED}{data['reason']}{OFF}\n")
+        return 1
+
+    n = data["population"]
+    print(f"  {DIM}population{OFF} {n} records layer 2 answered "
+          f"{DIM}(layer 1 and the cohort signal are untouched){OFF}")
+    print(f"  {DIM}consulted{OFF} {data['layer2_consulted']}  "
+          f"{DIM}api calls{OFF} {data['layer2_api_calls']}  "
+          f"{DIM}unanswered{OFF} {data['layer2_failure_rate']:.1%}\n")
+
+    rows = [
+        ("Recovered", "recovered_paise", True),
+        ("Records recovered", "recovered_records", False),
+        ("Human escalations", "human_escalations", False),
+        ("Contacts sent", "contacts", False),
+    ]
+    print(f"  {DIM}{'':<20} {'layer 2 on':>14} {'off':>14} "
+          f"{'delta':>14}{OFF}")
+    for label, key, money in rows:
+        d = data[key]
+        fmt = (lambda v: format_inr(int(v))) if money else (lambda v: f"{int(v)}")
+        delta = d["delta"]
+        tint = GREEN if delta > 0 else (RED if delta < 0 else DIM)
+        if key in ("human_escalations", "contacts"):
+            tint = GREEN if delta < 0 else (RED if delta > 0 else DIM)
+        print(f"  {label:<20} {fmt(d['with_ai']):>14} {fmt(d['without_ai']):>14} "
+              f"{tint}{fmt(delta):>14}{OFF}")
+        lo, hi = d["per_record_ci_95"]
+        unit = "₹/record" if money else "per record"
+        print(f"  {DIM}{'':<20} 95% CI [{lo:+.4g}, {hi:+.4g}] {unit}{OFF}")
+    print()
+
+    harm = data["harmful_actions"]
+    if harm:
+        print(f"  {RED}{len(harm)} harmful action"
+              f"{'s' if len(harm) != 1 else ''}{OFF} "
+              f"{DIM}— layer 2 mislabelled a cause that must never be "
+              f"acted on{OFF}")
+        for h in harm:
+            print(f"    {h['record_id']}  truth {h['truth']} → read as "
+                  f"{h['diagnosed']}  ({h['contacts']} contact"
+                  f"{'s' if h['contacts'] != 1 else ''})")
+    else:
+        print(f"  {GREEN}No harmful actions: layer 2 never acted on a cause "
+              f"the truth says must not be chased.{OFF}")
+    print()
+    print(f"  {BOLD}{data['headline']}{OFF}")
+    print(f"  {DIM}The money delta is an upper bound: the simulator recovers a "
+          f"record only when an\n  intervention fires, so the 'off' arm cannot "
+          f"self-cure. The escalation delta is counted,\n  not modelled. See "
+          f"docs/RESULTS.md.{OFF}\n")
+    return 0
+
+
 def cmd_replay(args) -> int:
     """The what-if. Same batch, different rules, side by side.
 
@@ -946,6 +1023,8 @@ def main(argv: list[str] | None = None) -> int:
         ("snapshot", cmd_snapshot, "freeze the settled arc for a cold deployment"),
         ("serve", cmd_serve, "run the API and dashboard"),
         ("replay", cmd_replay, "what-if: the same batch under different rules"),
+        ("ablation", cmd_ablation, "is layer 2 worth it: the same batch with "
+                                   "and without the model"),
         ("rules", cmd_rules, "show the rule table, shipped vs edited"),
         ("promises", cmd_promises, "the promise-to-pay book"),
     ]:
@@ -1008,6 +1087,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="override a guardrail threshold for the replay only, "
                          "e.g. value_ceiling.requires_human_above=7500000")
     rp.add_argument("--seed", type=int, default=settings.seed)
+
+    subs.choices["ablation"].add_argument("--seed", type=int,
+                                          default=settings.seed)
 
     subs.choices["rules"].add_argument(
         "--reset", action="store_true",

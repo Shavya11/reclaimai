@@ -43,40 +43,9 @@
   --shadow-lift: 0 6px 20px -8px rgba(16, 21, 28, 0.16);
 }
 
-/* System-default dark. Guarded so an explicit light choice still wins. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --canvas: #0b0d10;
-    --panel: #14181d;
-    --panel-2: #191e25;
-    --line: #262d36;
-    --line-strong: #35404c;
-
-    --ink: #e8edf3;
-    --muted: #a4b0be;
-    --dim: #8b97a6;
-
-    --green: #34d399;
-    --green-deep: #0c3d2b;
-    --green-mid: #10b981;
-    --green-soft: #17553d;
-    --green-wash: #10241c;
-    --on-deep: #d7f0e4;
-
-    --red: #f87171;
-    --red-wash: #2a1516;
-    --amber: #fbbf24;
-    --amber-wash: #2a2113;
-    --blue: #60a5fa;
-    --violet: #a78bfa;
-
-    --focus: #34d399;
-    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-lift: 0 6px 20px -8px rgba(0, 0, 0, 0.6);
-  }
-}
-
-/* Explicit choice wins in both directions. */
+/* Light is the default in every environment; dark is an explicit opt-in.
+   The OS preference is deliberately ignored — a projector-lit demo should
+   never come up in a theme nobody asked for. */
 :root[data-theme="dark"] {
   --canvas: #0b0d10;
   --panel: #14181d;

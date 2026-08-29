@@ -333,6 +333,100 @@ still open and are still tracked above rather than restated here.
 
 ---
 
+---
+
+## Day 6 — proving the model earns its place
+
+Prompted by reading five rival submissions. One of them (`recoup`) ran a real
+ablation on its own LLM, found the model made outcomes **worse by 21 points**,
+and published it with a confidence interval. That is a higher standard than we
+were meeting: we had been asserting layer 2 was worth having on the strength of
+a *diagnosis accuracy* number, which is a proxy for the thing that matters.
+
+**Done when:** the same batch runs with and without layer 2, the deltas carry
+intervals, and the harness refuses to print a comparison it cannot stand behind.
+
+- [x] **6.1 Close resolved human-queue rows** — `HumanQueueRow.resolved_at` had
+      existed since Day 1 and **nothing ever wrote to it**, so a record
+      escalated on Monday and paid on Friday stayed on somebody's list for ever.
+      Guardrail 11 stops the AGENT chasing money that already arrived; nothing
+      stopped a PERSON being sent to do it.
+      Fixed at both terminal points — attribution when a record reaches
+      RECOVERED, and `_close` when a stopping rule fires. The scoreboard now
+      reports `escalations`, `escalations_open` and `escalations_resolved`
+      separately, because "54 raised" and "43 still need a person" are both true
+      and only one of them is the number to quote at a merchant staffing this.
+      *This had to land first:* the ablation reports Δ human escalations, and
+      the bug inflated the arm with more recoveries — which is the arm with
+      layer 2 on. Measuring on top of it would have understated our own model.
+- [x] **6.2 Tier + expected-value ordering for the queue** — it sorted by amount
+      descending, so a revoked mandate worth ₹80,000, where the correct action
+      is none, outranked a ₹40,000 payment waiting on a signature.
+      Three hard tiers (blocking / judgement / for-the-record), then within a
+      tier `amount × P(recover|cause) × attempt decay × time decay`. Priors are
+      imported from `synthetic/outcomes.py` rather than copied, so the two
+      numbers cannot drift. `UNKNOWN` has no cause and therefore no prior — it
+      is scored on the mean of what it could turn out to be and the row says
+      **estimate** rather than printing a confident number we do not have.
+      The score orders a list; it never chooses an action.
+- [x] **6.3 The ablation** — `reclaim/experiments/ablation.py`, `cli ablation`.
+      Two arms, two scratch databases, same seed, real runner and real
+      guardrails throughout. Unlike the what-if replay, diagnoses are **not**
+      frozen: there, rules never affect DIAGNOSE; here diagnosis *is* the
+      independent variable. Bootstrap 95% CIs over **paired** resamples, stdlib
+      only.
+- [x] **6.4 Two void conditions** — above 25% unanswered layer-2 calls, no
+      comparison is printed at all. Not a warning above the table — *no table*,
+      because a reader who skims takes the table. The quieter condition is
+      **zero calls**: with no key configured both arms are the same arm and
+      every delta is zero by construction, which would read as "the model makes
+      no difference". Both refused, both tested.
+- [x] **6.5 `docs/RESULTS.md`** — the finding, and what it cannot show.
+
+- [x] **6.6 The evidence table** — `README.md` now opens with claim → code →
+      test name → measured number, and `tests/test_readme_claims.py` asserts
+      every cited test and every linked file actually exists. Prose does not
+      fail to compile, so a rename would otherwise turn a row into a claim with
+      nothing behind it. Verified by deliberately renaming a citation and
+      watching the guard fail.
+- [x] **6.7 Real vs modelled table** — what is live (Razorpay APIs, error codes,
+      HMAC over raw bytes, the attribution walk, every model call, all 14
+      guardrails) against what is modelled (whether a customer pays), plus three
+      limitations stated rather than waited for: the priors are estimates, there
+      is no self-cure path, and layer 2 misreads one `RISK_DECLINE`.
+- [x] **6.8 Fixed a stale figure in the honesty section** — the README itemised
+      the baseline gap as `₹2,41,069` from an older run when it is `₹23,52,777`.
+      A stale number is bad anywhere and worst in the section arguing we do not
+      inflate. Now current, and it makes the better point: of the whole gap,
+      **₹1,710 across 3 records is the only part where our strategy was simply
+      worse.** Everything else is a rule doing its job.
+
+### The result, and the honest caveat
+
+On the 69 records layer 2 answers: **+₹12,74,886 recovered, 51 fewer human
+escalations, 0 harmful actions**, every interval excluding zero, for **38 API
+calls** — the signature cache turns 412 consultations into 38 requests. With the
+model off, all 69 become `UNKNOWN` → `no_auto_action` → a person, which is not a
+queue, it is a backlog nobody works.
+
+**The money delta is an upper bound and the file says so.** The outcome simulator
+only recovers a record when an intervention fires, so the "off" arm scores ₹0 by
+construction rather than by measurement. Real customers sometimes pay unprompted;
+`recoup` has a self-cure baseline (organic 46 vs 45 across arms) and we do not.
+The escalation delta does not have this problem — those rows are counted.
+
+**The run is reproducible only up to the model's own variance**, which is also
+recorded rather than smoothed over. The seed fixes the batch, the rules and the
+arc; it does not fix the model. Two runs gave identical rupees, records and
+contacts, and escalations of 19 then 18 — one borderline record labelled
+differently. The deterministic arm is exactly reproducible; the arm with a model
+in it is not, and saying otherwise would be the kind of claim this whole exercise
+exists to stop us making.
+
+The one thing worth stating plainly: we built the measurement before running it
+and would have published a null result. That is the whole point of having built
+it.
+
 ## Non-negotiables (if everything else burns down)
 
 1. Guardrail test suite green

@@ -29,7 +29,7 @@ import {
   isBusy,
   post,
 } from "@/lib/api";
-import { Button, Card, Empty, Skeleton } from "@/components/ui";
+import { Badge, Button, Card, Empty, Skeleton } from "@/components/ui";
 import {
   IconAlert,
   IconAudit,
@@ -365,7 +365,7 @@ export default function Page() {
           </ul>
         </nav>
 
-        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 px-1">
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
           <div className="min-w-0">
             <h1 className="text-[26px] font-bold tracking-tight text-ink sm:text-[30px]">
               {title}
@@ -454,7 +454,7 @@ export default function Page() {
           )}
         </main>
 
-        <footer className="px-1 pb-2 text-[11px] leading-relaxed text-dim">
+        <footer className="pb-2 text-[11px] leading-relaxed text-dim">
           Real Razorpay APIs, real error-code shapes, real payment links.{" "}
           <strong className="font-semibold text-muted">
             Customer response is modelled
@@ -490,31 +490,21 @@ function Wordmark({ compact = false }: { compact?: boolean }) {
 }
 
 // The live theme is DOM state, not React state — the pre-paint script in the
-// layout may already have set it, and the OS can change it under us. Reading it
-// through an external store keeps one source of truth and avoids a
-// setState-in-effect on every mount.
-const MEDIA = "(prefers-color-scheme: dark)";
-
+// layout may already have set it. Reading it through an external store keeps one
+// source of truth and avoids a setState-in-effect on every mount.
 function subscribeTheme(cb: () => void) {
-  const mq = window.matchMedia(MEDIA);
-  mq.addEventListener("change", cb);
   window.addEventListener("reclaim-theme", cb);
-  return () => {
-    mq.removeEventListener("change", cb);
-    window.removeEventListener("reclaim-theme", cb);
-  };
+  return () => window.removeEventListener("reclaim-theme", cb);
 }
 
+// Light unless dark was explicitly chosen — the OS preference does not vote.
 function readTheme() {
-  const attr = document.documentElement.dataset.theme;
-  if (attr === "dark") return true;
-  if (attr === "light") return false;
-  return window.matchMedia(MEDIA).matches;
+  return document.documentElement.dataset.theme === "dark";
 }
 
 function ThemeToggle() {
-  // The prerendered snapshot has no DOM to ask, so it assumes light and
-  // corrects itself on hydration.
+  // The prerendered snapshot has no DOM to ask, and light is the default it
+  // would find anyway.
   const dark = useSyncExternalStore(subscribeTheme, readTheme, () => false);
 
   const toggle = () => {
@@ -694,21 +684,35 @@ function HumanQueue({
   items: QueueItem[];
   onOpen: (id: string) => void;
 }) {
-  const total = items.reduce((n, i) => n + i.amount_paise, 0);
+  // Tier 3 is not work. The policy already decided correctly that these are
+  // never chased, so counting them as a person's backlog overstates it — which
+  // is the difference between a queue somebody works and one they give up on.
+  //
+  // Defaulting a missing tier to 2 rather than trusting the field: a deployed
+  // API older than this build sends neither tier nor ev, and `undefined < 3` is
+  // false — so every row would read as settled and the screen would claim
+  // nothing needs a person. Degrading to "everything needs judgement" is the
+  // safe direction to be wrong in.
+  const tierOf = (i: QueueItem) => i.tier ?? 2;
+  const work = items.filter((i) => tierOf(i) < 3);
+  const settled = items.filter((i) => tierOf(i) === 3);
+  const reachable = work.reduce((n, i) => n + (i.ev_paise ?? 0), 0);
   return (
     <Card
-      title={`${items.length} escalations waiting`}
-      hint="Amounts above the value ceiling, causes the policy table refuses to automate, and diagnoses the confidence floor would not accept."
+      title={`${work.length} need a person`}
+      hint="Ranked by money actually reachable, not by size: a revoked mandate worth ₹80,000 is worth ₹0 to chase. Blocking rows are ones where the agent has composed an action and is idle until somebody answers."
       right={
         <div className="text-right">
           <p className="num text-[22px] font-bold leading-none text-amber">
-            {(total / 100).toLocaleString("en-IN", {
+            {(reachable / 100).toLocaleString("en-IN", {
               style: "currency",
               currency: "INR",
               maximumFractionDigits: 0,
             })}
           </p>
-          <p className="mt-1 text-[11px] text-dim">held for a person</p>
+          <p className="mt-1 text-[11px] text-dim">
+            reachable{settled.length > 0 ? ` · ${settled.length} settled` : ""}
+          </p>
         </div>
       }
     >
@@ -724,6 +728,12 @@ function HumanQueue({
                 </th>
                 <th scope="col" className="px-2 py-2.5 text-right font-semibold">
                   Amount
+                </th>
+                <th scope="col" className="px-2 py-2.5 text-right font-semibold">
+                  Reachable
+                </th>
+                <th scope="col" className="px-2 py-2.5 text-right font-semibold">
+                  Waiting
                 </th>
                 <th scope="col" className="px-2 py-2.5 text-left font-semibold">
                   Cause
@@ -745,11 +755,53 @@ function HumanQueue({
                       onOpen(i.record_id);
                     }
                   }}
-                  className="cursor-pointer border-b border-line/60 transition-colors duration-200 hover:bg-panel2"
+                  className={`cursor-pointer border-b border-line/60 transition-colors duration-200 hover:bg-panel2${
+                    tierOf(i) === 3 ? " opacity-55" : ""
+                  }`}
                 >
-                  <td className="num px-5 py-2.5 font-medium">{i.record_id}</td>
+                  <td className="num px-5 py-2.5 font-medium">
+                    <span className="flex items-center gap-2">
+                      {i.record_id}
+                      {tierOf(i) === 1 && (
+                        <Badge tone="amber" title={i.tier_label}>
+                          blocking
+                        </Badge>
+                      )}
+                      {tierOf(i) === 3 && (
+                        <Badge tone="plain" title={i.tier_label}>
+                          no action
+                        </Badge>
+                      )}
+                    </span>
+                  </td>
                   <td className="num px-2 py-2.5 text-right">
                     {i.amount_display}
+                  </td>
+                  <td
+                    className="num px-2 py-2.5 text-right"
+                    title={
+                      i.ev_is_estimate
+                        ? "Estimated: this record has no diagnosed cause, so it is scored on the average of what it could turn out to be."
+                        : "Amount x P(recover | cause) x attempt decay x time decay."
+                    }
+                  >
+                    {(i.ev_paise ?? 0) > 0 ? (
+                      <>
+                        {i.ev_display}
+                        {i.ev_is_estimate && (
+                          <span className="text-dim"> ~</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-dim">—</span>
+                    )}
+                  </td>
+                  <td className="num px-2 py-2.5 text-right text-[12px] text-muted">
+                    {i.days_waiting == null
+                      ? "—"
+                      : i.days_waiting < 1
+                        ? "today"
+                        : `${Math.round(i.days_waiting)}d`}
                   </td>
                   <td className="px-2 py-2.5 text-[12px]">
                     {i.root_cause ?? "—"}

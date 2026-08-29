@@ -432,25 +432,23 @@ def record_audit(record_id: str) -> dict[str, Any]:
 
 @app.get("/api/human-queue")
 def human_queue() -> dict[str, Any]:
-    from ..scoreboard import diagnosed_causes
+    """Open rows only, ordered tier-first then by reachable value.
 
-    causes = diagnosed_causes()
-    with SessionLocal() as session:
-        rows = (session.query(HumanQueueRow)
-                .order_by(desc(HumanQueueRow.amount)).all())
-        items = [{
-            "id": r.id,
-            "record_id": r.record_id,
-            "reason": r.reason,
-            "amount_paise": r.amount,
-            "amount_display": format_inr(r.amount),
-            "root_cause": causes.get(r.record_id),
-            "raised_at": r.raised_at.isoformat() if r.raised_at else None,
-            "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
-        } for r in rows]
+    Amount alone put a revoked mandate worth nothing above a payment that was
+    still recoverable, and resolved rows were never filtered out at all — so the
+    screen showed work that no longer existed, sorted by the wrong thing.
+    """
+    from .. import human_queue as queue
+
+    items = queue.open_items()
+    work = [i for i in items if i["tier"] < int(queue.Tier.FOR_THE_RECORD)]
     return {"count": len(items),
+            "open_work_count": len(work),
+            "resolved_count": queue.resolved_count(),
             "total_paise": sum(i["amount_paise"] for i in items),
             "total_display": format_inr(sum(i["amount_paise"] for i in items)),
+            "work_ev_paise": sum(i["ev_paise"] for i in work),
+            "work_ev_display": format_inr(sum(i["ev_paise"] for i in work)),
             "items": items}
 
 

@@ -10,6 +10,62 @@ A deterministic guardrail engine decides whether the action may fire.
 
 ---
 
+## Every claim, and how to check it
+
+Each row names the code that does the thing, the test that asserts it, and the
+number it produced on `seed 42`. Nothing here is a figure typed into a document.
+
+| Claim | Code | Test | Measured |
+|---|---|---|---|
+| A customer never gets a third message in 7 days | [rules/frequency_cap.py](reclaim/brain/guardrails/rules/frequency_cap.py) | `test_invariant_no_customer_exceeds_two_contacts_in_seven_days` | 70 refusals |
+| No action tuple ever executes twice | [rules/idempotency.py](reclaim/brain/guardrails/rules/idempotency.py) | `test_invariant_no_action_tuple_ever_executes_twice` | 192 executions, 192 distinct keys |
+| An opted-out customer is never contacted | [rules/consent.py](reclaim/brain/guardrails/rules/consent.py) | `test_opted_out_customer_never_contacted` | 15 refusals, 0 contacts |
+| Silent retries are exempt at 3am; SMS is not | [rules/quiet_hours.py](reclaim/brain/guardrails/rules/quiet_hours.py) | `test_silent_retry_allowed_at_3am_but_sms_is_not` | 23 silent retries |
+| A flagged card is never retried | [policies.yaml](reclaim/brain/policy/policies.yaml) | `test_risk_decline_never_produces_an_action` | 0 retries |
+| A guardrail never raises, even on junk | [guardrails/base.py](reclaim/brain/guardrails/base.py) | `test_guardrails_never_raise` | 500 malformed inputs, all blocked |
+| The batch completes with the model down | [diagnosis/engine.py](reclaim/brain/diagnosis/engine.py) | `test_batch_completes_when_the_api_is_down` | 180/180 records |
+| A forged webhook is rejected | [webhooks/signature.py](reclaim/webhooks/signature.py) | `test_a_tampered_body_fails_verification` | raw-byte HMAC |
+| Every recovered rupee traces to an intervention | [webhooks/attribution.py](reclaim/webhooks/attribution.py) | `test_recovered_money_equals_what_was_attributed` | ₹27,44,651 across 69 records |
+| No contact lands inside a promise window | [rules/promise_window.py](reclaim/brain/guardrails/rules/promise_window.py) | `test_invariant_no_contact_lands_inside_a_promise_window` | 2 refusals |
+| A settled record leaves the human queue | [human_queue.py](reclaim/human_queue.py) | `test_a_record_escalated_then_paid_leaves_the_queue` | 51 raised, 1 self-resolved |
+| The what-if replay writes nothing | [whatif.py](reclaim/whatif.py) | `test_a_replay_changes_nothing_in_the_live_database` | 3,848 rows unchanged |
+| Layer 2 earns its calls | [experiments/ablation.py](reclaim/experiments/ablation.py) | `tests/test_ablation.py` | +₹12,74,886, 51 fewer escalations |
+
+`cli verify` re-checks 25 of these structurally on every run, and `pytest` runs
+342 tests. Both are one command, below.
+
+---
+
+## What is real, and what is modelled
+
+The most common question about a hackathon number, answered before it is asked.
+
+| Real | Modelled |
+|---|---|
+| Razorpay orders, payment links and error codes — live test-mode API | **Whether a given customer pays.** Per-cause probabilities in [outcomes.py](reclaim/synthetic/outcomes.py) |
+| Error strings checked against Razorpay's published list — which caught 16 map keys and 3 generator strings Razorpay never emits | Which customer is opted out, on DND, or has a payment history |
+| Webhook HMAC-SHA256 over raw bytes, forgery and replay both refused | The timing of an inbound reply |
+| The attribution walk from a paid link back to the intervention that minted it | |
+| Every model call — layer 2 runs live on `gemini-3.5-flash-lite` | |
+| The policy engine, all 14 guardrails, and every refusal | |
+
+Three limitations we would rather state than be asked about:
+
+1. **Customer response is simulated**, and the per-cause priors are *stated
+   estimates*, not measured rates. They are published so they can be argued with.
+   This also means the recovery-rate-by-cause chart partly reflects numbers we
+   chose.
+2. **The outcome simulator has no self-cure path** — a record nobody acts on
+   never recovers. Real customers sometimes pay unprompted, so our
+   *written-off* bucket is overstated and the ablation's money figure is an
+   upper bound. See [docs/RESULTS.md](docs/RESULTS.md).
+3. **Layer 2 gets one wrong that matters.** Of three `RISK_DECLINE` records it
+   correctly refuses two and reads the third as `INSUFFICIENT_FUNDS` at high
+   confidence. It is in the audit trail and it is the honest answer to "what
+   does your model get wrong".
+
+---
+
 ## Verify in 90 seconds
 
 No credentials required. `DRY_RUN` is the default, so a fresh clone runs the whole
@@ -22,7 +78,7 @@ python -m venv .venv
 
 .venv/Scripts/python -m reclaim.cli demo --extra-ticks 3  # the whole arc, ~24s
 .venv/Scripts/python -m reclaim.cli verify                # structural self-audit
-.venv/Scripts/python -m pytest -q                         # 314 passed
+.venv/Scripts/python -m pytest -q                         # 342 passed
 .venv/Scripts/python -m reclaim.cli serve                 # dashboard on :8000
 
 .venv/Scripts/python -m reclaim.cli rules                 # the rule table, shipped vs edited
@@ -151,14 +207,17 @@ what each chose to do, when, and to whom.
 So `cli baseline` itemises every rupee of the gap:
 
 ```
-₹2,41,069 the naive run collects and we do not:
-    3    ₹79,258   customer opted out or on DND - contact refused
-    2  ₹1,47,603   above the value ceiling - routed to a human
-    2    ₹12,104   still in flight - deferred, not abandoned
-    3     ₹2,104   our strategy simply did worse here
+₹23,52,777 the naive run collects and we do not:
+   11  ₹12,33,478   customer opted out or on DND - contact refused
+    7  ₹11,05,485   above the value ceiling - routed to a human
+    2     ₹12,104   still in flight - deferred, not abandoned
+    3      ₹1,710   our strategy simply did worse here
 
-₹2,26,861 of that is money the agent was told not to take.
+₹23,38,963 of that is money the agent was told not to take.
 ```
+
+Of the whole gap, **₹1,710 across 3 records is the only part where our strategy
+was simply worse.** Everything else is a rule doing what it was written to do.
 
 The naive run is not a better strategy; it is an undeployable one. Publishing a
 comparison we lose on is only defensible because every rupee of the difference has

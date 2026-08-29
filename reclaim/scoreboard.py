@@ -91,6 +91,8 @@ class Scoreboard:
     guardrails_fired: dict[str, int] = field(default_factory=dict)
     guardrails_records: dict[str, int] = field(default_factory=dict)
     escalations: int = 0
+    escalations_open: int = 0
+    escalations_resolved: int = 0
     interventions: int = 0
     contacts: int = 0
     silent_retries: int = 0
@@ -171,6 +173,8 @@ class Scoreboard:
             "guardrails_records": self.guardrails_records,
             "guardrails_total": self.guardrails_total,
             "escalations": self.escalations,
+            "escalations_open": self.escalations_open,
+            "escalations_resolved": self.escalations_resolved,
             "interventions": self.interventions,
             "contacts": self.contacts,
             "silent_retries": self.silent_retries,
@@ -240,7 +244,15 @@ def compute(label: str = "ReclaimAI") -> Scoreboard:
         board.silent_retries = (session.query(InterventionRow)
                                 .filter(InterventionRow.outcome == "EXECUTED")
                                 .filter(InterventionRow.channel.is_(None)).count())
+        # Three counts, because conflating them overstates how much work the
+        # agent actually hands a person. `escalations` is everything ever
+        # raised; some of those records then paid or were closed by a stopping
+        # rule, and those rows are no longer anybody's to work.
         board.escalations = session.query(HumanQueueRow).count()
+        board.escalations_resolved = (session.query(HumanQueueRow)
+                                      .filter(HumanQueueRow.resolved_at.isnot(None))
+                                      .count())
+        board.escalations_open = board.escalations - board.escalations_resolved
         board.webhooks_attributed = (session.query(InterventionRow)
                                      .filter(InterventionRow.result.isnot(None))
                                      .count())

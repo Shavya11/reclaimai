@@ -21,7 +21,7 @@ from .brain import gate
 from .brain.diagnosis.engine import diagnose_batch
 from .brain.policy import decide
 from .brain.policy.engine import prefill_method, tone_for
-from . import clock
+from . import clock, human_queue
 from .config import settings
 from .db import AtRiskRecordRow, HumanQueueRow, SessionLocal, init_db
 from .enums import ActionType, RecordState, RootCause, Stage
@@ -360,6 +360,10 @@ def _close(action, result, reason: str | None = None) -> None:
         if record is not None and record.state in _OWNED_VALUES:
             record.state = RecordState.CLOSED.value
             record.next_action_at = None
+            # A stopping rule ends the record for everyone, not only for the
+            # agent. Leaving the row open asks a person to work something the
+            # system has already decided nobody will chase.
+            human_queue.resolve(record.id, session=session)
             session.commit()
     result.closed += 1
     audit.log(action.record_id, Stage.EXECUTE, "STOPPED",
