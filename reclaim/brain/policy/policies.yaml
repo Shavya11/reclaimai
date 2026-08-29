@@ -167,3 +167,91 @@ FAILED_MANDATE:
     strategy: no_auto_action
     escalate_to: human
     rationale: "Insufficient confidence to act."
+
+# ---------------------------------------------------------------------------
+# V2 — B2B receivables.
+#
+# The engine below this file did not change. What changed is that an invoice is
+# not a failed payment: nothing declined, so there is no error code to read, and
+# the reason it is unpaid is organisational rather than technical. That makes
+# the ladder — not the retry — the instrument, and it makes going QUIET on a
+# promise as important an action as sending anything.
+#
+# `ladder:` is the one new field. A dunning sequence escalates in tone and in
+# recipient as it climbs, and expressing that as four rows of data beats
+# expressing it as a branch in the engine. Step N applies to attempt N.
+# ---------------------------------------------------------------------------
+
+OVERDUE_INVOICE:
+
+  INVOICE_NOT_RECEIVED:
+    strategy: request_new_method
+    schedule: ["immediate", "+3d"]
+    max_attempts: 2
+    notify_customer: true
+    channel: EMAIL
+    tone: neutral
+    rationale: >-
+      Nothing is in dispute and nobody is refusing; the document never landed.
+      Resend it with a payment link and stop. Chasing harder an invoice the
+      buyer has not seen is how a supplier relationship gets spent on nothing.
+
+  AWAITING_APPROVAL:
+    strategy: scheduled_retry
+    schedule: ["+7d", "+14d"]
+    max_attempts: 2
+    notify_customer: true
+    channel: EMAIL
+    tone: gentle
+    rationale: >-
+      The invoice is inside the buyer's AP process and a person there has
+      already said so. Their approval cycle is not a delinquency, and a weekly
+      touch is the most that is useful — anything faster annoys the one person
+      who is actually helping.
+
+  BUYER_CASH_CRUNCH:
+    strategy: dunning_ladder
+    schedule: ["+7d", "+21d"]
+    max_attempts: 2
+    notify_customer: true
+    channel: EMAIL
+    ladder:
+      - {tone: gentle, action: SEND_LINK}
+      - {tone: firm, action: ESCALATE}
+    rationale: >-
+      The buyer intends to pay and cannot yet. Two touches spaced wide, then a
+      human who can actually discuss instalments — which is a commercial
+      decision and therefore never the agent's to make.
+
+  PAYMENT_STALLED:
+    strategy: dunning_ladder
+    schedule: ["immediate", "+7d", "+15d", "+30d"]
+    max_attempts: 4
+    notify_customer: true
+    channel: EMAIL
+    ladder:
+      - {tone: polite, action: NOTIFY}
+      - {tone: firm, action: SEND_LINK}
+      - {tone: firm, action: SEND_LINK, cc: finance_manager}
+      - {tone: final, action: ESCALATE}
+    rationale: >-
+      No dispute, no promise, no reply — it has simply stopped moving. This is
+      the ladder proper: polite, firmer with a link, firmer again with the
+      finance manager copied, and then a human account manager while the agent
+      stops. A broken promise lands here, one rung further up than it left.
+
+  INVOICE_DISPUTED:
+    strategy: no_auto_action
+    escalate_to: human
+    rationale: >-
+      A dispute is a conversation about what is owed, not a collection. Dunning
+      someone who has told you the amount is wrong destroys the account and
+      recovers nothing. It is not unrecoverable — a person resolves it and it
+      gets paid — which is why it is escalated rather than written off.
+
+  UNKNOWN:
+    strategy: no_auto_action
+    escalate_to: human
+    rationale: >-
+      Insufficient confidence to chase a business for money. The same rule as
+      everywhere else in this table.

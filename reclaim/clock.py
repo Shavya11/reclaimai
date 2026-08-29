@@ -71,6 +71,14 @@ def set_to(when: datetime) -> datetime:
     return now()
 
 
+def set_offset(seconds: float) -> None:
+    """Put the clock back where it was. Used by the what-if replay, which walks
+    a whole arc in a scratch database and must hand the live one back exactly
+    the demo time it borrowed — a replay that leaves the clock a month ahead has
+    changed the very state it promised not to touch."""
+    _write_offset(float(seconds))
+
+
 def reset() -> None:
     _write_offset(0.0)
 

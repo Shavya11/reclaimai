@@ -107,6 +107,22 @@ export type Scoreboard = {
   contacts_per_recovery: number;
   webhooks_attributed: number;
   balances: boolean;
+  // V2 receivables. Optional throughout, because the dashboard has to keep
+  // working against an API deployed before these existed — a demo that breaks
+  // because one half was deployed first is a demo that breaks on stage.
+  invoice_records?: number;
+  invoice_at_risk_paise?: number;
+  invoice_recovered_paise?: number;
+  invoice_recovered_records?: number;
+  invoice_at_risk_display?: string;
+  invoice_recovered_display?: string;
+  invoice_recovery_rate?: number;
+  dso_before?: number;
+  dso_after?: number;
+  dso_improvement?: number;
+  promises?: Record<string, number>;
+  promises_kept_rate?: number;
+  replies_read?: number;
 };
 
 export type Block = {
@@ -282,3 +298,111 @@ export const fmtTime = (iso: string | null | undefined) => {
 };
 
 export const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+
+// --- V2 -----------------------------------------------------------------------
+
+// Admin writes carry a body, unlike every V1 write which was a bare POST with
+// query parameters. Kept separate rather than widening `post`, so the existing
+// call sites keep their exact signature.
+export async function postJSON<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(
+    path,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    // A replay walks two full arcs. It is the one write in the system that
+    // does its work inside the request, because the answer is only useful
+    // immediately and polling for it would be a second mechanism.
+    READ_TIMEOUT_MS,
+  );
+}
+
+// A 422 is the validator refusing a rule. The problems it lists are the whole
+// value of the refusal, so they have to survive as far as the form.
+export const validationProblems = (e: unknown): string[] | null => {
+  if (!(e instanceof HttpError) || e.status !== 422) return null;
+  try {
+    const parsed = JSON.parse(e.detail ?? "");
+    return parsed?.problems ?? null;
+  } catch {
+    return e.detail ? [e.detail] : null;
+  }
+};
+
+export type GuardrailRule = {
+  name: string;
+  config: Record<string, unknown>;
+  modified: boolean;
+  default: Record<string, unknown> | null;
+};
+
+export type PolicyRule = {
+  leak_type: string;
+  root_cause: string;
+  row: Record<string, unknown>;
+  modified: boolean;
+  default: Record<string, unknown> | null;
+};
+
+export type RulesSnapshot = {
+  policies: PolicyRule[];
+  guardrails: GuardrailRule[];
+  seeded: boolean;
+};
+
+export type RuleChange = {
+  id: number;
+  scope: string;
+  key: string;
+  actor: string;
+  note: string;
+  changed_at: string | null;
+  diff: Array<{ field: string; before: unknown; after: unknown }>;
+};
+
+export type ReplayDiff = {
+  overrides: string[];
+  headline: string;
+  baseline: Record<string, number>;
+  variant: Record<string, number>;
+  deltas: Record<string, number | null>;
+  guardrails: Array<{
+    guardrail: string;
+    before: number;
+    after: number;
+    delta: number;
+  }>;
+  by_root_cause: Array<{
+    root_cause: string;
+    before_paise: number;
+    after_paise: number;
+    delta_paise: number;
+  }>;
+};
+
+export type PromiseRow = {
+  record_id: string;
+  promised_at: string | null;
+  promised_for: string | null;
+  amount_paise: number;
+  amount_display: string;
+  state: string;
+  confidence: number;
+  reply_text: string;
+  resolved_at: string | null;
+};
+
+export type ReplyRow = {
+  record_id: string;
+  outcome: string;
+  reason: string;
+  reply_text: string | null;
+  intent: string | null;
+  confidence: number | null;
+  quote: string | null;
+  promised_date: string | null;
+  source: string | null;
+  at: string | null;
+};

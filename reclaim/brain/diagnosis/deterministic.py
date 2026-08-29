@@ -86,6 +86,13 @@ def diagnose(record: AtRiskRecord) -> Diagnosis | None:
 def _diagnose(record: AtRiskRecord) -> Diagnosis | None:
     from ...enums import LeakType
 
+    # An overdue invoice has no error string. What it has is a ledger, and some
+    # of what the ledger records is fact rather than inference.
+    if record.leak_type is LeakType.OVERDUE_INVOICE:
+        from .receivables import diagnose as diagnose_receivable
+
+        return diagnose_receivable(record)
+
     # A cart with no payment attempt has no error to read, and needs none.
     if record.leak_type is LeakType.ABANDONED_CART:
         return Diagnosis(

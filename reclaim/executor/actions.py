@@ -75,20 +75,30 @@ def execute(
     client: RazorpayClient | None = None,
     sender: ChannelSender | None = None,
     merchant: str = "Acme Store",
+    at: datetime | None = None,
 ) -> Execution:
     """Executes one permitted action. Never raises for an expected condition;
-    a failed Razorpay call comes back as ok=False so the batch continues."""
+    a failed Razorpay call comes back as ok=False so the batch continues.
+
+    `at` is the batch's own clock. It matters more than it looks: the schedule
+    anchor for attempt N+1 and the seven-day window guardrail #7 counts over are
+    both read back off `executed_at`, and both are computed relative to the time
+    the batch believes it is running at. Stamping the wall clock instead leaves
+    a batch running at 11:00 writing rows dated 20:14, so the follow-up it
+    schedules and the window it counts disagree with the decision that produced
+    them — by minutes usually, and by two months whenever the demo clock is
+    advanced."""
     client = client or RazorpayClient()
     sender = sender or ChannelSender()
 
     try:
-        claim(action)
+        claim(action, at=at)
     except AlreadyExecuted:
         log.info("skipping %s — already executed", action.idempotency_key)
         return Execution(action=action, ok=True, skipped=True)
 
     if action.action_type in {ActionType.ESCALATE, ActionType.NO_ACTION}:
-        return _record(Execution(action=action, ok=True))
+        return _record(Execution(action=action, ok=True), at)
 
     try:
         if action.action_type is ActionType.SILENT_RETRY:
@@ -97,7 +107,7 @@ def execute(
                 notes={"record_id": action.record_id, "reclaim": "silent_retry"},
             )
             return _record(Execution(action=action, ok=True,
-                                     razorpay_ref=order.get("id")))
+                                     razorpay_ref=order.get("id")), at)
 
         link = client.create_payment_link(
             action.amount,
@@ -117,16 +127,16 @@ def execute(
             execution.delivery = sender.send(
                 action.channel, recipient_for(action.channel, customer), text)
 
-        return _record(execution)
+        return _record(execution, at)
 
     except RazorpayError as exc:
         # The key stays claimed. A retry of this exact attempt will be skipped
         # rather than risking a second charge; the record is parked for review.
         log.warning("execution failed for %s: %s", action.record_id, exc)
-        return _record(Execution(action=action, ok=False, error=str(exc)))
+        return _record(Execution(action=action, ok=False, error=str(exc)), at)
 
 
-def _record(execution: Execution) -> Execution:
+def _record(execution: Execution, at: datetime | None = None) -> Execution:
     action = execution.action
     with SessionLocal() as session:
         session.add(InterventionRow(
@@ -136,7 +146,7 @@ def _record(execution: Execution) -> Execution:
             policy_ref=action.policy_ref,
             attempt_number=action.attempt_number,
             scheduled_for=action.scheduled_for,
-            executed_at=now(),
+            executed_at=at or now(),
             razorpay_ref=execution.razorpay_ref,
             outcome="EXECUTED" if execution.ok else "FAILED",
         ))

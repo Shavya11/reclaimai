@@ -5,7 +5,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .enums import ActionType, Channel, LeakType, RecordState, RootCause
+from .enums import (
+    ActionType, Channel, LeakType, RecordState, ReplyIntent, RootCause,
+)
 from .timeutil import to_ist
 
 
@@ -46,6 +48,25 @@ class Diagnosis(_Base):
     recoverable: bool
     evidence_used: list[str] = Field(default_factory=list)
     source: str = Field(description="deterministic | llm | fallback")
+
+
+class ReplyReading(_Base):
+    """What the model made of one customer reply.
+
+    The same shape as Diagnosis and for the same reason: a label from a closed
+    enum, an honest confidence, and the evidence. `promised_date` is the one
+    field the model fills that has a number in it, and it is a STRING here on
+    purpose — it stays untrusted text until promises.validate_date has refused
+    or accepted it. Typing it as a datetime would let a parsed date look
+    validated, which is the whole thing this class is trying not to do.
+    """
+
+    intent: "ReplyIntent"
+    confidence: float = Field(ge=0.0, le=1.0)
+    reasoning: str
+    quote: str = ""
+    promised_date: str | None = None
+    source: str = Field(default="llm", description="llm | fallback")
 
 
 class ProposedAction(_Base):

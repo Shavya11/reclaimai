@@ -22,50 +22,106 @@ python -m venv .venv
 
 .venv/Scripts/python -m reclaim.cli demo --extra-ticks 3  # the whole arc, ~24s
 .venv/Scripts/python -m reclaim.cli verify                # structural self-audit
-.venv/Scripts/python -m pytest -q                         # 194 passed
+.venv/Scripts/python -m pytest -q                         # 314 passed
 .venv/Scripts/python -m reclaim.cli serve                 # dashboard on :8000
+
+.venv/Scripts/python -m reclaim.cli rules                 # the rule table, shipped vs edited
+.venv/Scripts/python -m reclaim.cli promises              # the promise-to-pay book
+.venv/Scripts/python -m reclaim.cli replay \
+    --guardrail value_ceiling.requires_human_above=7500000
 ```
 
 Every command takes `--json`.
 
-**The batch is seeded.** `seed 42` produces the same 120 records, the same
-`₹8,24,984`, and the same timestamps on every machine — `cli verify` compares a
+**The batch is seeded.** `seed 42` produces the same 180 records, the same
+`₹1,12,09,814`, and the same timestamps on every machine — `cli verify` compares a
 digest of every field, not just the total, because amounts that reproduce while
 timestamps drift is how compliance counts quietly move between runs. Numbers below
 are meant to be reproduced, not trusted.
+
+V2 added 60 B2B invoices to the 120 payment records. They are drawn from their own
+RNG stream, appended after the payments batch, so **V1's figures still reproduce
+exactly**:
+
+```bash
+cli detect --leak-types FAILED_PAYMENT,ABANDONED_CART,FAILED_MANDATE
+# 120 at-risk records, ₹8,24,984 at risk
+```
+
+Sharing one stream would have shifted all 120 existing records and invalidated
+every number published about V1 — invisibly, while the batch still ran and still
+looked right. `tests/test_generator.py` asserts the identity, not the count.
 
 ---
 
 ## The run
 
 ```
-BATCH RESULTS  (n = 120 at-risk records)
+BATCH RESULTS  (n = 180 at-risk records)
 
-  Money at risk                    ₹8,24,984
-  Money recovered                  ₹1,22,347   (14.8% by value, 36.7% by record)
-  Still open                       ₹5,14,077
-  Written off / unrecoverable      ₹1,88,560   (never-retry causes, escalated not chased)
+  Money at risk                 ₹1,12,09,814
+  Money recovered                 ₹27,44,651   (24.5% by value, 38.3% by record)
+  Still open                      ₹70,42,793
+  Written off / unrecoverable     ₹14,22,370   (never-retry causes, escalated not chased)
 
   Recovery rate by root cause
-    BANK_DOWNTIME            82%    18/22       ₹50,707     <- cohort signal, 0 contacts
-    INSUFFICIENT_FUNDS       37%    13/35       ₹31,301     <- layer 2, salary-window retry
-    AUTH_DROPOFF             28%     5/18       ₹30,039
-    EXPIRED_INSTRUMENT       24%     4/17        ₹3,653
-    CART_ABANDONMENT         22%     4/18        ₹6,647
-    POLICY_BLOCK              0%     0/4             ₹0     <- correctly escalated, never chased
-    UNKNOWN                   0%     0/3             ₹0     <- layer 2 declined to guess
+    AWAITING_APPROVAL        32%     9/28    ₹16,71,657   <- their cycle, not a delinquency
+    INVOICE_NOT_RECEIVED     80%    8/10      ₹5,19,966   <- it never arrived; resend it
+    BUYER_CASH_CRUNCH        18%    2/11      ₹3,09,909
+    PAYMENT_STALLED          17%     1/6        ₹88,921   <- the dunning ladder
+    INSUFFICIENT_FUNDS       51%   18/35        ₹63,152   <- layer 2, salary-window retry
+    BANK_DOWNTIME            82%   18/22        ₹50,707   <- cohort signal, 0 contacts
+    AUTH_DROPOFF             28%    5/18        ₹30,039
+    CART_ABANDONMENT         22%    4/18         ₹6,647
+    EXPIRED_INSTRUMENT       24%    4/17         ₹3,653
+    INVOICE_DISPUTED          0%     0/6             ₹0   <- a conversation, never dunned
+    POLICY_BLOCK              0%     0/4             ₹0   <- correctly escalated
     MANDATE_REVOKED           0%     0/3             ₹0
+    UNKNOWN                   0%     0/2             ₹0   <- layer 2 declined to guess
 
-  Guardrails: 271 refusals across 92 records
-  Human escalations               17
-  Interventions executed         141   (118 contacts, 23 silent)
-  Contacts per recovery         2.68
-  Outcomes attributed            141   via verified webhooks
+  Guardrails: 439 refusals across 154 records
+  Human escalations               50
+  Interventions executed         192   (169 contacts, 23 silent)
+  Contacts per recovery         2.45
+  Outcomes attributed            192   via verified webhooks
+
+  Receivables            60 invoices · ₹1,03,84,830 at risk · ₹25,90,453 recovered
+  DSO                    132.5 -> 119.5 days   (12.9 days off the average)
+  Promises to pay        9 made · 6 kept · 3 broken   (67% kept)
+  Replies read           27, each labelled from a closed set of seven intents
 ```
 
 `recovered + open + written off == at risk`, asserted by `cli verify` and by
 `tests/test_scoreboard.py`. A scoreboard that does not add up is one where a rupee
 got counted twice, and nothing crashes when that happens.
+
+### What reproduces exactly, and what does not
+
+Worth separating, because publishing a figure that will not come back is how a
+number stops being evidence.
+
+**Exactly reproducible, on any machine:** the batch itself — 180 records,
+`₹1,12,09,814`, every amount, every customer, every timestamp. `cli verify`
+compares a digest of every field. Also the entire run with layer 2 off:
+`cli demo --no-llm` lands on `₹8,61,109` across 34 records, twice, ten times,
+anywhere.
+
+**Not exactly reproducible: the headline recovered figure.** Layer 2 is a
+language model and it is not deterministic — the same invoice can come back
+`PAYMENT_STALLED` on one run and `INVOICE_NOT_RECEIVED` on the next, which is a
+different policy row, a different ladder and a different outcome. Two live runs
+of the arc on this machine produced `₹27,44,651` and `₹23,44,566`.
+
+So the figure published above is the one frozen in
+`fixtures/demo_snapshot.json.gz` — a real run of the real pipeline, committed, and
+what the deployment restores. It is reproducible in the only sense that matters
+for a published number: anyone can restore it and get the same scoreboard. A
+fresh live run will land near it, not on it.
+
+The seeded parts of the simulation are unaffected. Whether a customer pays is
+drawn from a stream keyed on `(record, attempt)`, so the naive baseline and this
+run get the same coin flips and the comparison between them stays honest even as
+the diagnoses move.
 
 ---
 
@@ -76,15 +132,16 @@ easy to quietly not publish the result.
 
 | | Naive | ReclaimAI |
 |---|---:|---:|
-| Recovered | ₹3,62,225 | ₹1,22,347 |
-| Recovery rate (records) | 42.5% | 36.7% |
-| Customer contacts | 278 | **118** |
-| Contacts per recovery | 5.45 | **2.68** |
-| Contacts to opted-out customers | 29 | **0** |
-| Contacts to customers on DND | 45 | **0** |
-| Contacts inside quiet hours | 190 | **0** |
+| Recovered | ₹47,58,234 | ₹27,44,651 |
+| Recovery rate (records) | 45.0% | 38.3% |
+| Customer contacts | 418 | **169** |
+| Contacts per recovery | 5.16 | **2.45** |
+| Contacts to opted-out customers | 44 | **0** |
+| Contacts to customers on DND | 66 | **0** |
+| Contacts inside quiet hours | 330 | **0** |
+| Contacts over the frequency cap | 289 | **0** |
 | Retries against never-retry causes | 30 | **0** |
-| **Contacts our guardrails refuse** | **455** | **0** |
+| **Contacts our guardrails refuse** | **729** | **0** |
 
 **The naive strategy recovers more money.** Both runs draw their coin flips from
 the same seeded stream keyed on `(record, attempt)`, so record `REC_5041`'s second
@@ -126,7 +183,7 @@ PASS  detectors cover all V1 leak types
 PASS  outcome simulator covers every RootCause
 PASS  deterministic map yields valid causes
 PASS  policies.yaml covers every RootCause
-PASS  13 guardrails implemented
+PASS  14 guardrails implemented and registered
 PASS  webhook signature verifies raw bytes
 PASS  webhook handles the five outcome events
 PASS  API exposes every documented route
@@ -238,7 +295,7 @@ outcome simulator decides only *whether the customer paid*.
 
 Layer 2 runs only on the records an error string cannot resolve, using forced tool
 use against a closed enum. The model cannot invent a root cause — only pick a wrong
-one from a fixed list, which the policy table and the thirteen guardrails below it
+one from a fixed list, which the policy table and the fourteen guardrails below it
 still contain. A schema violation becomes `UNKNOWN` and reaches a human; it never
 becomes a guess.
 
@@ -305,8 +362,8 @@ dashboard. [DEPLOY.md](DEPLOY.md) is the step-by-step.
 **Live:** dashboard at **https://reclaimai-eight.vercel.app**, API and webhook
 receiver at **https://reclaimai-api.onrender.com**.
 
-The deployed scoreboard reproduces the local one to the rupee — `₹1,22,347`
-recovered, 36.7% of records, 2.68 contacts per recovery — on the first request,
+The deployed scoreboard reproduces the local one to the rupee — `₹27,44,651`
+recovered, 38.3% of records, 2.45 contacts per recovery — on the first request,
 from a cold instance, with no key configured at all. It is restored from
 `fixtures/demo_snapshot.json.gz`: the settled arc frozen by `reclaim snapshot`,
 walked once with layer 2 on by the same runner that produces the local numbers.
@@ -321,9 +378,22 @@ yet* rather than *nothing was recovered*.
 
 `GEMINI_API_KEY` now buys the *live* buttons rather than the first impression:
 with it, Run batch and the clock chips re-diagnose for real and land back on
-`₹1,22,347`; without it they re-run on layer 1 alone and land `₹91,046` across
-31 records, with 38 in `UNKNOWN` instead of 3. Same code, same seed, different
+`₹27,44,651`; without it they re-run on layer 1 alone and land `₹8,61,109` across
+34 records, with 69 in `UNKNOWN` instead of 2. Same code, same seed, different
 diagnosis depth.
+
+The gap is wider in V2 than it was in V1, and the reason is worth stating: layer 1
+for receivables answers only what the ledger already knows — a dispute flag, a
+partial payment, an invoice inside the buyer's own average — and refuses to guess
+between "nobody received it" and "it stalled". Without a model those 31 invoices
+are honestly `UNKNOWN` and reach a person. That is the fallback chain working, not
+a degraded mode to apologise for, but it is a real difference in what the agent
+can do alone.
+
+Without a model the conversation layer degrades the same way: replies are matched
+on keywords at a deliberate 0.5 confidence, which sits below the floor, so every
+one of them reaches a human and **no promise is ever made**. The batch still
+completes.
 
 ```
    Vercel  ──────────►  Render  ◄──────────  Razorpay

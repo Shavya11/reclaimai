@@ -123,3 +123,21 @@ export const IconRupee = (p: IconProps) => (
     <path d="M7 4h10M7 9h10M15.5 4c0 3.6-2.6 5-6 5h-.5l7 10" />
   </Svg>
 );
+
+// V2. Sliders for the rules studio; a handshake for the promise book.
+export const IconRules = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" />
+    <circle cx="16" cy="6" r="2" />
+    <circle cx="10" cy="12" r="2" />
+    <circle cx="18" cy="18" r="2" />
+  </Svg>
+);
+
+export const IconPromise = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 10.5 7 7l3.5 2.5L14 7l7 4.5" />
+    <path d="M14 17l-2.5-2M10.5 19l-2-2M17 15l-2.5-2.5" />
+    <path d="M3 10.5V17h2M21 11.5V17h-2" />
+  </Svg>
+);

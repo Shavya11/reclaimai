@@ -22,10 +22,11 @@ from ...models import Diagnosis
 from .llm_diagnoser import (
     DIAGNOSIS_TOOL,
     MAX_TOKENS,
-    SYSTEM_PROMPT,
     CachedDiagnoser,
     _validate,
     build_context,
+    prompt_for,
+    tool_for,
 )
 
 log = logging.getLogger(__name__)
@@ -70,20 +71,21 @@ class GeminiDiagnoser(CachedDiagnoser):
                 time.sleep(wait)
             cls._last_call = time.monotonic()
 
-    def _ask(self, record, signal) -> Diagnosis | None:
+    def _ask(self, record, signal=None) -> Diagnosis | None:
         from google.genai import types
 
         self.calls += 1
+        tool = tool_for(record)
         config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=prompt_for(record),
             max_output_tokens=MAX_TOKENS,
             tools=[
                 types.Tool(
                     function_declarations=[
                         types.FunctionDeclaration(
                             name=TOOL_NAME,
-                            description=DIAGNOSIS_TOOL["description"],
-                            parameters_json_schema=DIAGNOSIS_TOOL["input_schema"],
+                            description=tool["description"],
+                            parameters_json_schema=tool["input_schema"],
                         )
                     ]
                 )

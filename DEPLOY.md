@@ -8,9 +8,14 @@
 > | API + webhook | **https://reclaimai-api.onrender.com** |
 > | Repo | `github.com/Shavya11/reclaimai` (private) |
 >
-> The deployed scoreboard reproduces the local one exactly — `₹80,183`
-> recovered, 31.7% of records, 1.97 contacts per recovery. Same seed, different
-> machine, identical numbers.
+> The deployed scoreboard reproduces the committed snapshot exactly —
+> `₹27,44,651` recovered, 38.3% of records, 2.45 contacts per recovery, across
+> 180 records. Same snapshot, different machine, identical numbers.
+>
+> It reproduces the SNAPSHOT rather than a fresh run, and that distinction is
+> load-bearing now: layer 2 is not deterministic, so a live re-run lands near
+> these figures rather than on them. The snapshot is a real run of the real
+> pipeline, committed — see README, "What reproduces exactly, and what does not".
 >
 > **Remaining:** point a Razorpay webhook at
 > `https://reclaimai-api.onrender.com/webhooks/razorpay` (step 3) and pay one
@@ -23,7 +28,8 @@
 **Read this first: the point of deploying is the webhook, not the hosting.**
 
 Every other part of this system has been exercised. The webhook receiver, the
-HMAC verification and the attribution chain carry 23 tests, but no delivery has
+HMAC verification and the attribution chain carry 19 tests inside a suite of 314,
+but no delivery has
 ever arrived *from Razorpay*, because there is no public URL on the build
 machine for Razorpay to reach. A deployment gives you one. That is the whole
 return on this hour.
@@ -43,8 +49,8 @@ deployment receive webhooks and act as a link you can put in the submission.
 
 ## 0. Push to GitHub  ✅ DONE
 
-`github.com/Shavya11/reclaimai`, private, 10 commits. `.env` is gitignored and
-was verified absent from the push before it ran.
+`github.com/Shavya11/reclaimai`, private. `.env` is gitignored and was verified
+absent from the push before it ran, and re-verified before the V2 push.
 
 ---
 
@@ -70,7 +76,7 @@ curl https://reclaimai-api.onrender.com/api/scoreboard
 ```
 
 `/api/health` should report `ok: true` and `seeding: false`. `/api/scoreboard`
-should show 120 records and ₹1,22,347 recovered on the very first request —
+should show 180 records and ₹27,44,651 recovered on the very first request —
 `SEED_ON_BOOT` restores `fixtures/demo_snapshot.json.gz`, which is the settled
 arc frozen by `reclaim snapshot`. It takes about a second, calls nothing, and
 lands on the published numbers because the same runner produced both.

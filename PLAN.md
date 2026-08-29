@@ -16,6 +16,7 @@ Read `PROJECT.md` first for the spec. This file is the schedule and the checklis
 - [x] Day 2 — Brain
 - [x] Day 3 — Hands
 - [x] Day 4 — Face + Proof
+- [x] Day 5 — V2: receivables, promises, rules studio
 
 ---
 
@@ -240,9 +241,95 @@ so the plan does not read as if the project stopped when the checkboxes ran out.
 - [ ] **Re-capture live webhook proof into the repo** — the five verified
       deliveries were lost with Render's `/tmp`. Pay one link, save the
       `simulated: false` JSON under `evidence/`. Proof on an ephemeral disk has
-      an expiry date; proof in git does not.
+      an expiry date; proof in git does not. *(Still open after Day 5.)*
 - [ ] **Rotate the Gemini API key** after the buildathon — it was handled in
-      plaintext during setup.
+      plaintext during setup. *(Still open after Day 5.)*
+
+
+
+---
+
+## Day 5 — V2 (one day)
+
+`PROJECT.md` §12 had already decided the scope: (a) dynamic rules, (b) B2B
+receivables + promise-to-pay, (c) voice stays a slide. This was not a scoping
+day, it was an execution day.
+
+**Done when:** 180 records run end to end, the V1 120 still reproduce byte for
+byte, and `pytest` is green.
+
+### B — receivables and promises
+
+- [x] **B1 Taxonomy** — five new `RootCause` members, `RecordState.PROMISED`,
+      `ReplyIntent`, `PromiseState`, `Stage.REPLY`. All four files moved together
+      per CLAUDE.md; `cli verify` caught the fifth thing nobody listed, which was
+      that the coverage check itself had become wrong.
+      Added `CAUSES_FOR_LEAK`: coverage is now per leak type in both directions,
+      and the tool schema offered to the model is **narrowed** to the causes a
+      leak type can actually have. The closed-set guarantee got tighter, not
+      looser — the receivables model is never offered `EXPIRED_INSTRUMENT`.
+- [x] **B2 Invoice data** — 60 overdue invoices, drawn from `Random(seed + 1)`
+      **appended after** the payments stream. This was risk #1 and it was real:
+      sharing the stream would have shifted all 120 existing records and
+      invalidated every published number, invisibly, while the batch still ran
+      and still looked right. Verified by digest, not by eye —
+      `d905a053e94ccd8f6a1aac4ad5ec4eb520a6289df98c0e5e876b8ab067730514`,
+      unchanged, still ₹8,24,984.
+      `--leak-types` filters AFTER every draw, so it returns a subset rather than
+      a different batch.
+- [x] **B3 Dunning ladder** — `ladder:` in `policies.yaml`, one new field. Day 1
+      polite → day 7 firmer + link → day 15 CC finance manager → day 30 human.
+- [x] **B4 Promise state machine + guardrail 14** — the promise is a guardrail,
+      not a special case in the runner. See PROJECT.md §12b for why that choice
+      is the whole design.
+- [x] **B5 Reply intent extraction** — `CachedDiagnoser` generalised over its
+      result type rather than copied, so caching, the concurrency cap, the
+      free-tier pacing and never-raise are in one place for both jobs.
+      Deterministic date validation sits between the model and the state machine.
+- [x] **B6 Simulated replies** — including Hinglish, because that is how these
+      actually arrive and it is what makes the voice slide honest.
+- [x] **B7 DSO + promise counts on the scoreboard**, value-weighted.
+
+### A — rules studio
+
+- [x] **A1 DB-backed rules behind the one loader** — no call site changed.
+- [x] **A2 Admin API + validation** — every shipped default passes its own
+      validator, and every dangerous edit is refused with a readable reason.
+- [x] **A3 What-if replay** — two arcs against a scratch database, frozen
+      diagnoses, and a `verify.py` check that the live database and the demo
+      clock are untouched.
+- [x] **A4 Rules studio UI** + promises/replies screen + DSO on the dashboard.
+
+### Cross-cutting
+
+- [x] `tests/test_promises.py`, `test_conversation.py`, `test_receivables.py`,
+      `test_rules_admin.py` — and a **third property invariant**: no contact ever
+      lands inside a promise window.
+- [x] Four new `verify.py` checks, and two V1 checks sharpened — guardrails are
+      now counted against the registry rather than a literal, so a rule that
+      exists as a file but was never registered fails instead of passing.
+
+### Two things found on the way, both worth keeping
+
+**The value ceiling had to become per leak type.** ₹50,000 is a sensible bound on
+autonomous authority for a failed consumer card, and seven records in a hundred
+exceed it. Pointed at B2B receivables, where a routine invoice is ₹2 lakh, the
+same number sent 48 of 60 invoices to a human — not restraint, a queue nobody can
+work. The ceiling is a judgement about a KIND of money, so it is now configurable
+per leak type, with a missing entry inheriting the STRICTEST value: a config gap
+must never widen authority. This is also the best argument for the rules studio
+existing, since it is exactly what a merchant discovers on their second day.
+
+**The test suite was wall-clock dependent and nobody knew.** Several runner tests
+passed before 20:00 IST and failed after it, because quiet hours were doing
+exactly their job at the one moment nobody was watching for it. Batches in tests
+now run from a pinned daytime `frm`. Related, and fixed with it: `executed_at`
+was stamped from the clock rather than from the batch's own time, so a batch
+running at 11:00 wrote rows dated 20:14 — and the schedule anchor for attempt
+N+1 and the seven-day frequency window are both read back off that column.
+
+Both Day 4 carry-overs — the live webhook artifact and the key rotation — are
+still open and are still tracked above rather than restated here.
 
 ---
 

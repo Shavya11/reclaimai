@@ -15,6 +15,7 @@ from .rules.frequency_cap import FrequencyCap
 from .rules.idempotency import Idempotency
 from .rules.kill_switch import KillSwitch
 from .rules.max_attempts import MaxAttempts
+from .rules.promise_window import PromiseWindow
 from .rules.quiet_hours import QuietHours
 from .rules.state_validity import StateValidity
 from .rules.value_ceiling import ValueCeiling
@@ -33,6 +34,7 @@ REGISTRY: list[Guardrail] = [
     StateValidity(),
     ConfidenceFloor(),
     Freshness(),
+    PromiseWindow(),
 ]
 
 GUARDRAIL_NAMES = [g.name for g in REGISTRY]

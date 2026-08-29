@@ -166,7 +166,7 @@ export default function Dashboard({
           label="Money at risk"
           value={board.at_risk_display}
           accent
-          sub={`${board.records} records detected across failed payments, abandoned carts and failed mandates`}
+          sub={`${board.records} records \u2014 failed payments, abandoned carts, failed mandates${board.invoice_records ? ` and ${board.invoice_records} overdue invoices` : ""}`}
           onOpen={onDrill && (() => onDrill("all"))}
           openLabel="Open every detected record"
         />
@@ -201,6 +201,9 @@ export default function Dashboard({
           openLabel="Open stopped records"
         />
       </div>
+
+      {/* --- receivables, when there are any ----------------------------- */}
+      {!!board.invoice_records && <Receivables board={board} />}
 
       {/* --- the money band, tying those four together ------------------- */}
       <div className="md:col-span-12">
@@ -509,6 +512,92 @@ function Row({
         {hint && <span className="ml-1.5 text-[11px] text-dim">{hint}</span>}
       </dt>
       <dd className="num shrink-0 font-semibold text-ink">{value}</dd>
+    </div>
+  );
+}
+
+
+// B2B receivables sit alongside the payments figures rather than in a scoreboard
+// of their own. Two scoreboards invite quoting whichever half looks better, and
+// "what did the agent recover" is one question.
+//
+// DSO leads, because it is the number a finance team recognises. A recovery rate
+// is our metric; days sales outstanding is theirs, and the whole argument for
+// chasing receivables well is made in days rather than percentages.
+function Receivables({ board }: { board: Scoreboard }) {
+  const improvement = board.dso_improvement ?? 0;
+  const promises = board.promises ?? {};
+  const resolved = (promises.KEPT ?? 0) + (promises.BROKEN ?? 0);
+
+  return (
+    <div className="md:col-span-12">
+      <Card
+        title="B2B receivables"
+        hint="The same engine, a different leak type. An invoice does not fail — it goes unanswered, and the reason is organisational rather than technical."
+        right={
+          <Badge tone="violet">
+            {board.invoice_records} invoices · {board.invoice_at_risk_display}
+          </Badge>
+        }
+      >
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Figure
+            label="Days sales outstanding"
+            value={`${(board.dso_after ?? 0).toFixed(0)} days`}
+            note={
+              improvement > 0.05
+                ? `${improvement.toFixed(1)} days off the average — value-weighted, so a ₹12 lakh invoice counts for more than a ₹25,000 one`
+                : "No movement yet — DSO improves as invoices settle earlier in the arc"
+            }
+            tone={improvement > 0.05 ? "green" : "ink"}
+          />
+          <Figure
+            label="Recovered from invoices"
+            value={board.invoice_recovered_display ?? "₹0"}
+            note={`${pct(board.invoice_recovery_rate ?? 0)} by value · ${board.invoice_recovered_records ?? 0} invoices`}
+            tone="green"
+          />
+          <Figure
+            label="Promises to pay"
+            value={String(promises.OPEN ?? 0)}
+            note={
+              resolved
+                ? `${promises.KEPT ?? 0} kept, ${promises.BROKEN ?? 0} broken — a broken one climbs the ladder a rung`
+                : "Open promises are records the agent is holding contact on, on purpose"
+            }
+            tone="amber"
+          />
+          <Figure
+            label="Replies read"
+            value={String(board.replies_read ?? 0)}
+            note="Each one labelled from a closed set of seven intents. Five of the seven route to a person."
+          />
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function Figure({
+  label,
+  value,
+  note,
+  tone = "ink",
+}: {
+  label: string;
+  value: string;
+  note: string;
+  tone?: "ink" | "green" | "amber";
+}) {
+  const colour =
+    tone === "green" ? "text-green" : tone === "amber" ? "text-amber" : "text-ink";
+  return (
+    <div className="rounded-2xl border border-line bg-panel2 p-4">
+      <p className="text-[12px] font-medium text-muted">{label}</p>
+      <p className={`num mt-2 text-[24px] font-bold leading-none tracking-tight ${colour}`}>
+        {value}
+      </p>
+      <p className="mt-2 text-[11px] leading-relaxed text-dim">{note}</p>
     </div>
   );
 }

@@ -4,7 +4,15 @@ from ....enums import RecordState
 from ....models import GuardrailViolation, ProposedAction
 from ..base import GuardrailContext
 
-ACTIONABLE = {RecordState.AT_RISK.value, RecordState.IN_PROGRESS.value}
+# PROMISED belongs here, which looks wrong and is not.
+#
+# A promised record is still the agent's to work: it has to wake on the promised
+# date, and it has to be chased when that date passes unpaid. What must not
+# happen is contacting the customer in the meantime — and that is guardrail 14's
+# job, deferring until the date, not this one's, which would block the record
+# permanently and quietly kill every promise the moment it was made.
+ACTIONABLE = {RecordState.AT_RISK.value, RecordState.IN_PROGRESS.value,
+              RecordState.PROMISED.value}
 
 
 class StateValidity:

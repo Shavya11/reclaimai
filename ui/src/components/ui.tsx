@@ -285,6 +285,10 @@ export function Skeleton({ className = "" }: { className?: string }) {
 export const STATE_TONE: Record<string, string> = {
   RECOVERED: "green",
   AT_RISK: "amber",
+  // Held on a promise. Its own colour rather than borrowing IN_PROGRESS,
+  // because "waiting on a date the customer named" and "mid-flight" are
+  // different states and the whole feature is the difference.
+  PROMISED: "violet",
   IN_PROGRESS: "blue",
   ESCALATED: "violet",
   CLOSED: "plain",
@@ -297,5 +301,6 @@ export const STAGE_TONE: Record<string, string> = {
   DECIDE: "violet",
   GUARDRAIL: "amber",
   EXECUTE: "blue",
+  REPLY: "violet",
   OUTCOME: "green",
 };

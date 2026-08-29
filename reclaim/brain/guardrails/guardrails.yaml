@@ -29,6 +29,15 @@ value_ceiling:
   # Paise. Above this an action needs a human, whatever the policy says.
   requires_human_above: 5000000   # ₹50,000
 
+  # Per leak type, because the ceiling is a judgement about a KIND of money.
+  # ₹50,000 is a lot of authority for an agent chasing a failed consumer card
+  # and seven records in a hundred exceed it. The same number against B2B
+  # receivables, where a routine invoice is ₹2 lakh, sends four invoices in five
+  # to a human and turns the agent off. A leak type with no entry here inherits
+  # the strict number above — a missing row must never widen authority.
+  by_leak_type:
+    OVERDUE_INVOICE: 60000000     # ₹6,00,000
+
 daily_budget:
   max_auto_actions_per_day: 200
 
@@ -40,3 +49,13 @@ confidence_floor:
 freshness:
   # Older than this and chasing it is harassment, not collection.
   max_age_days: 90
+
+promise_window:
+  # V2. Somebody said they would pay on a date; contact is held until it passes.
+  # The grace period is the difference between firm and unpleasant — a promise
+  # made for Friday is not dunned at one minute past midnight on Saturday.
+  grace_hours: 24
+  # A promise further out than this is a brush-off, not a commitment, and
+  # honouring it would park a receivable for a quarter. Beyond it the extracted
+  # date is refused and the reply reaches a human instead.
+  max_horizon_days: 45

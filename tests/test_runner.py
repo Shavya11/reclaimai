@@ -17,6 +17,10 @@ from reclaim.db import (
 from reclaim.enums import Stage
 from reclaim.runner import BatchCrashed, run_batch, tick
 
+# 120 payments + 60 overdue invoices. Named rather than repeated so that adding
+# a leak type is one edit here, not a hunt through assertions.
+BATCH_SIZE = 180
+
 
 @pytest.fixture(autouse=True)
 def _clean_db():
@@ -25,6 +29,18 @@ def _clean_db():
     silently becomes a resumed one and starts depending on test order."""
     reset_database()
     clock.reset()
+
+
+def _daytime():
+    """A fixed, well-inside-business-hours moment to run batches from.
+
+    Not cosmetic. Without it these tests read the wall clock, and every one that
+    depends on a customer contact actually firing passes before 20:00 IST and
+    fails after it — quiet hours are doing exactly their job, at the one moment
+    nobody is watching for it. A suite whose result depends on what time it is
+    run is a suite that will fail on a demo morning for no reason anybody can
+    reproduce."""
+    return clock.now().replace(hour=11, minute=0, second=0, microsecond=0)
 
 
 def _duplicate_keys() -> list[str]:
@@ -40,13 +56,13 @@ def _duplicate_keys() -> list[str]:
 def test_a_crashed_batch_resumes_without_double_charging():
     """THE test. Kill the batch at 30 actions, restart it, count the keys."""
     with pytest.raises(BatchCrashed):
-        run_batch(dry_run=True, crash_at=30)
+        run_batch(dry_run=True, crash_at=30, frm=_daytime())
 
     with SessionLocal() as s:
         claimed_before = s.query(ExecutedActionRow).count()
     assert claimed_before > 0, "crash landed before anything executed"
 
-    run_batch(dry_run=True, reseed=False)
+    run_batch(dry_run=True, reseed=False, frm=_daytime())
 
     assert _duplicate_keys() == []
 
@@ -56,12 +72,12 @@ def test_resume_blocks_replays_at_the_guardrail():
     ever reaches Razorpay, rather than letting the database constraint be the
     only thing standing between a crash and a second charge."""
     with pytest.raises(BatchCrashed):
-        run_batch(dry_run=True, crash_at=30, settle=False)
+        run_batch(dry_run=True, crash_at=30, settle=False, frm=_daytime())
     with SessionLocal() as s:
         claimed = {k for (k,) in s.query(ExecutedActionRow.idempotency_key)}
     assert claimed
 
-    resumed = run_batch(dry_run=True, reseed=False, settle=False)
+    resumed = run_batch(dry_run=True, reseed=False, settle=False, frm=_daytime())
 
     # The resume is expected to execute the actions the crash never reached.
     # What it must not do is re-execute the ones it did, and the guardrail is
@@ -79,8 +95,8 @@ def test_running_the_same_batch_twice_executes_nothing_new():
     """A replay is a replay. settle=False freezes the world between the two
     runs, so nothing has legitimately advanced and every action the second run
     proposes is one the first already took."""
-    first = run_batch(dry_run=True, settle=False)
-    second = run_batch(dry_run=True, reseed=False, settle=False)
+    first = run_batch(dry_run=True, settle=False, frm=_daytime())
+    second = run_batch(dry_run=True, reseed=False, settle=False, frm=_daytime())
 
     assert first.executed > 0
     assert second.executed == 0
@@ -92,7 +108,7 @@ def test_a_settled_outcome_advances_the_ladder_rather_than_replaying():
     record is on attempt 2 — a different action with a different key, not a
     replay of attempt 1. A system that cannot tell those apart either
     double-charges or never follows up."""
-    first = run_batch(dry_run=True)
+    first = run_batch(dry_run=True, frm=_daytime())
     assert first.settlement is not None
     assert first.settlement.no_response > 0, "nothing was left unanswered"
 
@@ -109,9 +125,9 @@ def test_a_settled_outcome_advances_the_ladder_rather_than_replaying():
 
 
 def test_no_key_ever_appears_twice_across_many_runs():
-    run_batch(dry_run=True)
+    run_batch(dry_run=True, frm=_daytime())
     for _ in range(3):
-        run_batch(dry_run=True, reseed=False)
+        run_batch(dry_run=True, reseed=False, frm=_daytime())
 
     with SessionLocal() as s:
         total = s.query(ExecutedActionRow).count()
@@ -124,13 +140,19 @@ def test_no_key_ever_appears_twice_across_many_runs():
 
 
 def test_batch_completes_for_every_record():
-    result = run_batch(dry_run=True)
-    assert result.proposed == 120
-    assert result.allowed + result.blocked == 120
+    """Every record is accounted for: judged by the guardrails now, or parked
+    because its action is not yet due. Nothing is silently dropped.
+
+    Asserting `proposed == BATCH_SIZE` alone would have been wrong the moment a
+    leak type arrived whose first rung is days out rather than immediate — the
+    batch would look short by two while behaving perfectly."""
+    result = run_batch(dry_run=True, frm=_daytime())
+    assert result.proposed + result.scheduled == BATCH_SIZE
+    assert result.allowed + result.blocked == result.proposed
 
 
 def test_blocked_actions_are_audited_as_loudly_as_executed_ones():
-    run_batch(dry_run=True)
+    run_batch(dry_run=True, frm=_daytime())
     with SessionLocal() as s:
         from reclaim.db import AuditLogRow
         blocked = s.query(AuditLogRow).filter_by(
@@ -142,26 +164,26 @@ def test_blocked_actions_are_audited_as_loudly_as_executed_ones():
 
 
 def test_every_record_gets_a_diagnosis_and_a_decision_in_the_audit_log():
-    run_batch(dry_run=True)
+    run_batch(dry_run=True, frm=_daytime())
     with SessionLocal() as s:
         from reclaim.db import AuditLogRow
         diagnosed = s.query(func.count(func.distinct(AuditLogRow.record_id))).filter(
             AuditLogRow.stage == Stage.DIAGNOSE.value).scalar()
         decided = s.query(func.count(func.distinct(AuditLogRow.record_id))).filter(
             AuditLogRow.stage == Stage.DECIDE.value).scalar()
-    assert diagnosed == 120
-    assert decided == 120
+    assert diagnosed == BATCH_SIZE
+    assert decided == BATCH_SIZE
 
 
 def test_human_escalations_reach_a_queue_not_the_void():
-    run_batch(dry_run=True)
+    run_batch(dry_run=True, frm=_daytime())
     with SessionLocal() as s:
         assert s.query(HumanQueueRow).count() > 0
 
 
 def test_one_record_has_a_readable_timeline():
     """Demo beat #3: click a record, see the whole decision."""
-    run_batch(dry_run=True)
+    run_batch(dry_run=True, frm=_daytime())
     rows = audit.timeline("REC_5000")
     stages = [r.stage for r in rows]
     assert Stage.DIAGNOSE.value in stages
@@ -189,10 +211,11 @@ def test_a_dead_razorpay_parks_records_instead_of_crashing():
     original = runner_mod.RazorpayClient
     runner_mod.RazorpayClient = Dead
     try:
-        result = run_batch(dry_run=True)
+        result = run_batch(dry_run=True, frm=_daytime())
     finally:
         runner_mod.RazorpayClient = original
 
     assert result.failed > 0
-    assert result.proposed == 120       # the batch still completed
+    # the batch still completed: every record judged or parked
+    assert result.proposed + result.scheduled == BATCH_SIZE
     assert _duplicate_keys() == []      # and still did not double-charge

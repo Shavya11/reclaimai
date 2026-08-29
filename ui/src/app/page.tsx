@@ -39,15 +39,19 @@ import {
   IconMoon,
   IconPlay,
   IconPower,
+  IconPromise,
   IconQueue,
+  IconRules,
   IconSearch,
   IconSun,
 } from "@/components/icons";
 import Dashboard from "@/components/Dashboard";
 import Queue from "@/components/Queue";
 import AuditTrail from "@/components/AuditTrail";
+import Promises from "@/components/Promises";
+import RulesStudio from "@/components/RulesStudio";
 
-type Tab = "dashboard" | "queue" | "human" | "audit";
+type Tab = "dashboard" | "queue" | "promises" | "human" | "rules" | "audit";
 
 const TICKS: Array<[string, string]> = [
   ["20m", "20m"],
@@ -74,6 +78,14 @@ const PAGE_TITLE: Record<Tab, [string, string]> = {
   human: [
     "Human queue",
     "Five policy rows are no_auto_action by design. Knowing when to stop and fetch a person is the differentiator, not a gap.",
+  ],
+  promises: [
+    "Promises & replies",
+    "The agent deliberately saying nothing. A customer named a date, so contact is held until it passes \u2014 and checked when it does.",
+  ],
+  rules: [
+    "Rules studio",
+    "Every threshold is a policy decision somebody should be able to argue with. Change one and replay the same batch to see what it would have cost.",
   ],
   audit: [
     "Audit trail",
@@ -205,10 +217,13 @@ export default function Page() {
   };
 
   const [title, blurb] = PAGE_TITLE[tab];
+  const openPromises = board?.promises?.OPEN ?? 0;
   const nav: Array<[Tab, string, typeof IconDashboard, number | null]> = [
     ["dashboard", "Dashboard", IconDashboard, null],
     ["queue", "Recovery queue", IconQueue, records.length || null],
+    ["promises", "Promises & replies", IconPromise, openPromises || null],
     ["human", "Human queue", IconHuman, queue.length || null],
+    ["rules", "Rules studio", IconRules, null],
     ["audit", "Audit trail", IconAudit, null],
   ];
 
@@ -424,6 +439,10 @@ export default function Page() {
               filter={queueFilter}
               onFilter={setQueueFilter}
             />
+          ) : tab === "promises" ? (
+            <Promises onOpenRecord={openAudit} />
+          ) : tab === "rules" ? (
+            <RulesStudio onChanged={refresh} />
           ) : tab === "human" ? (
             <HumanQueue items={queue} onOpen={openAudit} />
           ) : openRecord ? (

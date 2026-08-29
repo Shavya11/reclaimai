@@ -16,6 +16,7 @@ from hypothesis import HealthCheck, given, settings as hyp_settings, strategies 
 from reclaim.brain.guardrails import GUARDRAIL_NAMES, REGISTRY, GuardrailContext, evaluate_all
 from reclaim.enums import ActionType, Channel, RecordState
 from reclaim.models import ProposedAction
+from reclaim.brain.rules import threshold
 from reclaim.timeutil import IST
 
 NOON = datetime(2026, 8, 24, 12, 0, tzinfo=IST)
@@ -141,9 +142,19 @@ def test_guardrails_never_raise():
 # --- engine behaviour -------------------------------------------------------
 
 
-def test_all_thirteen_guardrails_are_registered():
-    assert len(REGISTRY) == 13
-    assert len(set(GUARDRAIL_NAMES)) == 13
+def test_every_guardrail_file_is_registered():
+    """A guardrail that exists as a file but never reaches the registry is a
+    guardrail that silently does nothing — the exact failure this whole layer is
+    built to prevent. Counted against the directory rather than a literal, so
+    adding a rule and forgetting to register it fails here."""
+    from pathlib import Path
+
+    rules_dir = Path(__file__).resolve().parent.parent / "reclaim" / "brain"         / "guardrails" / "rules"
+    files = {p.stem for p in rules_dir.glob("*.py") if p.stem != "__init__"}
+
+    assert files == set(GUARDRAIL_NAMES)
+    assert len(REGISTRY) == len(files) == 14   # 13 from V1, plus promise_window
+    assert len(set(GUARDRAIL_NAMES)) == len(REGISTRY), "a name is duplicated"
 
 
 def test_all_violations_are_collected_not_just_the_first():
@@ -236,7 +247,7 @@ def test_silent_retry_is_exempt_from_contact_rules():
     assert result.allowed is True
 
 
-# --- property tests: the two invariants -------------------------------------
+# --- property tests: the three invariants -----------------------------------
 
 
 @hyp_settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow],
@@ -287,3 +298,63 @@ def test_invariant_no_action_tuple_ever_executes_twice(keys):
             executed.add(action.idempotency_key)
 
     assert len(executed) == len(set(executed))
+
+
+@hyp_settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow],
+              deadline=None)
+@given(
+    days_ahead=st.integers(min_value=1, max_value=40),
+    offsets=st.lists(st.integers(min_value=-72, max_value=72),
+                     min_size=1, max_size=12),
+    channel=st.sampled_from([Channel.SMS, Channel.EMAIL, Channel.WHATSAPP]),
+    action_type=st.sampled_from([ActionType.SEND_LINK, ActionType.NOTIFY]),
+)
+def test_invariant_no_contact_lands_inside_a_promise_window(
+    days_ahead, offsets, channel, action_type
+):
+    """INVARIANT 3: while a promise stands, no contact reaches the customer.
+
+    V2's addition, and the one that is hardest to see when it breaks. A promise
+    that fails to suppress contact behaves exactly like one that works, right
+    up until somebody who committed to Friday is dunned on Wednesday — and the
+    only visible trace is a message that should not have been sent.
+
+    Whatever the promised date, and whenever the action is scheduled relative to
+    it, an allowed contact must fall on or after the date plus its grace period.
+    """
+    promised_for = NOON + timedelta(days=days_ahead)
+    grace = timedelta(hours=float(
+        threshold("promise_window", "grace_hours", default=24)))
+    release = promised_for + grace
+
+    for offset in offsets:
+        when = promised_for + timedelta(hours=offset)
+        action = _action(action_type, channel=channel, when=when)
+        result = evaluate_all(
+            action, _ctx(extra={"promised_for": promised_for}))
+        if result.allowed:
+            assert when >= release, (
+                f"contact allowed at {when} against a promise for "
+                f"{promised_for} (released {release})")
+
+
+@hyp_settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow],
+              deadline=None)
+@given(
+    promised=st.one_of(
+        st.none(),
+        st.text(max_size=8),
+        st.integers(),
+        st.floats(allow_nan=True, allow_infinity=True),
+        st.lists(st.integers(), max_size=3),
+    )
+)
+def test_a_malformed_promise_never_opens_the_gate(promised):
+    """Fail closed on junk. A corrupted promise value must never be the reason
+    a contact is ALLOWED — it may block, it may be ignored, it may not permit."""
+    result = evaluate_all(
+        _action(ActionType.SEND_LINK, channel=Channel.SMS),
+        _ctx(extra={"promised_for": promised}),
+    )
+    assert isinstance(result.allowed, bool)
+

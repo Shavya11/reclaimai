@@ -161,6 +161,20 @@ def _diagnoser(args):
     return gem if gem.available else None
 
 
+def _extractor(args):
+    """The reply reader. Same switch as the diagnoser, for the same reason.
+
+    `--no-llm` must turn off BOTH jobs. Leaving the extractor running under a
+    flag that says no model would make the flag a lie, and would make the
+    degraded path — every reply reaching a human — untestable from the command
+    line, which is the only place anyone would test it."""
+    if getattr(args, "no_llm", False):
+        return None
+    from .brain.conversation import build_extractor
+
+    return build_extractor()
+
+
 def cmd_diagnose(args) -> int:
     from .brain.diagnosis.accuracy import cohort_counterfactual, score
     from .brain.diagnosis.engine import diagnose_batch
@@ -306,7 +320,8 @@ def cmd_run_batch(args) -> int:
     crashed = None
     try:
         result = run_batch(
-            seed=args.seed, llm=_diagnoser(args), crash_at=args.crash_at,
+            seed=args.seed, llm=_diagnoser(args), extractor=_extractor(args),
+            crash_at=args.crash_at,
             reseed=not args.resume, dry_run=None if args.live else True,
             settle=not args.no_settle, client=_client(args),
         )
@@ -424,6 +439,7 @@ def cmd_tick(args) -> int:
 
     before = clock.now()
     result, at = tick(advance=args.advance, seed=args.seed, llm=_diagnoser(args),
+                      extractor=_extractor(args),
                       dry_run=None if args.live else True, client=_client(args))
 
     if args.json:
@@ -539,13 +555,15 @@ def cmd_demo(args) -> int:
           f"layer 2 {'on' if llm else 'off'}{OFF}")
     print()
 
-    result = run_batch(seed=args.seed, llm=llm, dry_run=None if args.live else True)
+    extractor = _extractor(args)
+    result = run_batch(seed=args.seed, llm=llm, extractor=extractor,
+                       dry_run=None if args.live else True)
     print(f"  {'t0':<24} due {result.proposed:>3}  executed {result.executed:>3}  "
           f"blocked {result.blocked:>3}  waiting {result.scheduled:>3}")
 
     arc = DEMO_ARC + ["+7d"] * max(0, args.extra_ticks)
     for step in arc:
-        res, at = tick(advance=step, seed=args.seed, llm=llm,
+        res, at = tick(advance=step, seed=args.seed, llm=llm, extractor=extractor,
                        dry_run=None if args.live else True)
         recovered = res.settlement.recovered if res.settlement else 0
         label = f"{step} -> {at:%d %b %H:%M}"
@@ -610,8 +628,8 @@ def cmd_snapshot(args) -> int:
     print(f"{DIM}  the whole arc, once, so the deployment never has to{OFF}")
     print()
 
-    payload = snapshot.build(llm=llm, seed=args.seed,
-                             extra_ticks=args.extra_ticks)
+    payload = snapshot.build(llm=llm, extractor=_extractor(args),
+                             seed=args.seed, extra_ticks=args.extra_ticks)
 
     size = snapshot.PATH.stat().st_size / 1024
     board = payload["scoreboard"]
@@ -692,6 +710,184 @@ def cmd_prove_idempotency(args) -> int:
     return 0 if dupes == 0 else 1
 
 
+def cmd_replay(args) -> int:
+    """The what-if. Same batch, different rules, side by side.
+
+    Overrides are given as `section.key=value` so the demo can be driven from
+    one line: `cli replay --guardrail value_ceiling.requires_human_above=7500000`.
+    """
+    from . import whatif
+    from .brain.validation import RuleInvalid
+    from .money import format_inr
+
+    payload: dict = {"guardrails": {}, "policies": {}}
+    for raw in args.guardrail or []:
+        key, _, value = raw.partition("=")
+        section, _, field = key.strip().partition(".")
+        if not section or not field:
+            print(f"{RED}--guardrail wants section.key=value, got {raw!r}{OFF}")
+            return 2
+        payload["guardrails"].setdefault(section, {})[field] = _coerce(value)
+
+    if not payload["guardrails"]:
+        print(f"{RED}Nothing to compare: pass at least one --guardrail.{OFF}")
+        return 2
+
+    try:
+        overrides = whatif.parse_overrides(payload)
+    except RuleInvalid as exc:
+        print(f"\n  {RED}That rule would not be accepted:{OFF}")
+        for problem in exc.problems:
+            print(f"    - {problem}")
+        print()
+        return 2
+
+    print(f"\n{BOLD}WHAT-IF REPLAY{OFF}  {DIM}two arcs, scratch database, "
+          f"frozen diagnoses{OFF}")
+    for line in overrides.describe():
+        print(f"  {DIM}override{OFF} {line}")
+    print()
+
+    try:
+        diff = whatif.replay(overrides, seed=args.seed).as_dict()
+    except RuntimeError as exc:
+        print(f"  {RED}{exc}{OFF}\n")
+        return 1
+
+    if args.json:
+        print(json.dumps(diff, indent=2))
+        return 0
+
+    rows = [
+        ("recovered", "recovered_paise", True),
+        ("records recovered", "records_recovered", False),
+        ("contacts sent", "contacts", False),
+        ("human escalations", "escalations", False),
+        ("guardrail refusals", "guardrails_total", False),
+    ]
+    print(f"  {'':<22}{'as configured':>16}{'with change':>16}{'delta':>14}")
+    for label, key, money in rows:
+        before, after = diff["baseline"].get(key), diff["variant"].get(key)
+        delta = diff["deltas"].get(key)
+        fmt = (lambda v: format_inr(int(v))) if money else (lambda v: str(v))
+        numeric = isinstance(delta, (int, float))
+        sign = "" if not numeric or delta == 0 else ("+" if delta > 0 else "-")
+        tint = GREEN if (numeric and delta > 0) else (
+            YELLOW if (numeric and delta < 0) else DIM)
+        shown = fmt(abs(delta)) if numeric else "-"
+        print(f"  {label:<22}{fmt(before):>16}{fmt(after):>16}"
+              f"{tint}{sign + shown:>14}{OFF}")
+
+    if diff["guardrails"]:
+        print(f"\n  {DIM}guardrails that moved{OFF}")
+        for g in diff["guardrails"]:
+            print(f"    {g['guardrail']:<20} {g['before']:>5} -> "
+                  f"{g['after']:<5}  {g['delta']:+}")
+
+    print(f"\n  {BOLD}{diff['headline']}{OFF}")
+    print(f"  {DIM}Nothing was saved. The live database and the demo clock are "
+          f"untouched.{OFF}\n")
+    return 0
+
+
+def _coerce(value: str):
+    """Command-line values are strings; the validator wants the real type."""
+    text = value.strip()
+    low = text.lower()
+    if low in {"true", "false"}:
+        return low == "true"
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
+def cmd_rules(args) -> int:
+    """Show the rule table and whether each row is shipped or edited."""
+    from . import admin
+
+    if args.reset:
+        print(f"  restored {admin.reset()} rules to the shipped defaults\n")
+        return 0
+
+    snap = admin.snapshot()
+    if args.json:
+        print(json.dumps(snap, indent=2))
+        return 0
+
+    source = "edited in the database" if snap["seeded"] else "shipped defaults"
+    print(f"\n{BOLD}GUARDRAIL THRESHOLDS{OFF}  {DIM}{source}{OFF}")
+    for entry in snap["guardrails"]:
+        mark = f"{YELLOW}edited{OFF}" if entry["modified"] else f"{DIM}default{OFF}"
+        print(f"  {entry['name']:<20} {mark}")
+        for key, value in entry["config"].items():
+            was = (entry["default"] or {}).get(key)
+            suffix = (f"   {DIM}(was {was}){OFF}"
+                      if entry["modified"] and was != value else "")
+            print(f"      {key:<26} {value}{suffix}")
+
+    edited = [e for e in snap["policies"] if e["modified"]]
+    print(f"\n{BOLD}POLICY ROWS{OFF}  {DIM}{len(snap['policies'])} rows, "
+          f"{len(edited)} edited{OFF}")
+    for entry in edited:
+        print(f"  {YELLOW}{entry['leak_type']}.{entry['root_cause']}{OFF}")
+
+    recent = admin.changes(5)
+    if recent:
+        print(f"\n{BOLD}RECENT CHANGES{OFF}")
+        for c in recent:
+            print(f"  {(c['changed_at'] or '')[:16]}  {c['scope']:<10} {c['key']}")
+            for d in c["diff"][:3]:
+                print(f"      {d['field']}: {d['before']} -> {d['after']}")
+    print()
+    return 0
+
+
+def cmd_promises(args) -> int:
+    """The promise book. Open promises are the agent deliberately silent, which
+    is the one thing a dashboard cannot render as activity."""
+    from .db import PromiseRow, SessionLocal
+    from .money import format_inr
+    from .promises import counts
+
+    tally = counts()
+    with SessionLocal() as session:
+        rows = session.query(PromiseRow).order_by(PromiseRow.id).all()
+        items = [{"record_id": r.record_id, "state": r.state,
+                  "promised_for": r.promised_for, "amount": r.amount,
+                  "reply": r.reply_text or "", "confidence": r.confidence}
+                 for r in rows]
+
+    if args.json:
+        print(json.dumps({
+            "counts": tally,
+            "promises": [{**i, "promised_for": i["promised_for"].isoformat()}
+                         for i in items]}, indent=2))
+        return 0
+
+    resolved = tally.get("KEPT", 0) + tally.get("BROKEN", 0)
+    kept_rate = (f" | kept {tally.get('KEPT', 0) / resolved:.0%} of the time"
+                 if resolved else "")
+    print(f"\n{BOLD}PROMISES TO PAY{OFF}   {DIM}open {tally.get('OPEN', 0)} | "
+          f"kept {tally.get('KEPT', 0)} | broken {tally.get('BROKEN', 0)}"
+          f"{kept_rate}{OFF}\n")
+    for i in items:
+        tint = {"OPEN": YELLOW, "KEPT": GREEN, "BROKEN": RED}.get(i["state"], DIM)
+        print(f"  {i['record_id']:<12} {tint}{i['state']:<8}{OFF} "
+              f"{format_inr(i['amount']):>14}  by {i['promised_for']:%d %b}  "
+              f"{DIM}conf {i['confidence']:.2f}{OFF}")
+        if i["reply"]:
+            print(f"      {DIM}{i['reply'][:88]}{OFF}")
+    if not items:
+        print(f"  {DIM}No promises yet. Run the arc with a model available.{OFF}")
+    print()
+    return 0
+
+
 def _reset_database() -> None:
     """The demo clock lives in the same database file, so it resets with it."""
     from .db import reset_database
@@ -749,6 +945,9 @@ def main(argv: list[str] | None = None) -> int:
         ("demo", cmd_demo, "the whole arc: reset, run, tick, score, compare"),
         ("snapshot", cmd_snapshot, "freeze the settled arc for a cold deployment"),
         ("serve", cmd_serve, "run the API and dashboard"),
+        ("replay", cmd_replay, "what-if: the same batch under different rules"),
+        ("rules", cmd_rules, "show the rule table, shipped vs edited"),
+        ("promises", cmd_promises, "the promise-to-pay book"),
     ]:
         sp = subs.add_parser(name, help=helptext)
         sp.add_argument("--json", action="store_true", help="machine-readable output")
@@ -803,6 +1002,16 @@ def main(argv: list[str] | None = None) -> int:
         subs.choices[name].add_argument("--seed", type=int, default=settings.seed)
         subs.choices[name].add_argument("--no-llm", action="store_true",
                                         help="skip layer 2 and prove the batch still completes")
+
+    rp = subs.choices["replay"]
+    rp.add_argument("--guardrail", action="append", metavar="SECTION.KEY=VALUE",
+                    help="override a guardrail threshold for the replay only, "
+                         "e.g. value_ceiling.requires_human_above=7500000")
+    rp.add_argument("--seed", type=int, default=settings.seed)
+
+    subs.choices["rules"].add_argument(
+        "--reset", action="store_true",
+        help="restore every rule to the shipped defaults")
 
     seed_p = subs.choices["seed"]
     seed_p.add_argument("--seed", type=int, default=settings.seed)

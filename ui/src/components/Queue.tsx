@@ -21,6 +21,8 @@ const FILTERS = [
   { key: "all", label: "All" },
   { key: "blocked", label: "Blocked" },
   { key: "AT_RISK", label: "At risk" },
+  { key: "PROMISED", label: "Promised" },
+  { key: "OVERDUE_INVOICE", label: "Invoices" },
   { key: "RECOVERED", label: "Recovered" },
   { key: "ESCALATED", label: "Escalated" },
   { key: "CLOSED", label: "Stopped" },
@@ -44,6 +46,12 @@ export default function Queue({
   const rows = useMemo(() => {
     let out = records;
     if (filter === "blocked") out = out.filter((r) => r.blocks.length > 0);
+    // The filter bar mixes two axes on purpose. A demo is driven by "show me
+    // the invoices" as readily as by "show me what recovered", and forcing
+    // those into separate controls costs a click at the exact moment somebody
+    // is watching.
+    else if (filter === "OVERDUE_INVOICE")
+      out = out.filter((r) => r.leak_type === "OVERDUE_INVOICE");
     else if (filter !== "all") out = out.filter((r) => r.state === filter);
     const q = search.trim().toUpperCase();
     if (q) {

@@ -56,21 +56,28 @@ def bucket_key(issuer: str, dt) -> str:
 
 
 def compute(records: list[AtRiskRecord], traffic: dict[str, int]) -> dict[str, CohortSignal]:
-    """record_id -> the cohort signal for that record's (issuer, hour) bucket."""
+    """record_id -> the cohort signal for that record's (issuer, hour) bucket.
+
+    Only records that name an issuer take part. An overdue invoice has no
+    issuer and no attempt behind it, so including one would both invent a
+    cohort out of accounts-receivable data and drag the merchant's baseline
+    failure rate — the denominator every outage judgement divides by — toward a
+    number no bank was involved in producing.
+    """
+    scoped = [r for r in records if r.raw_signals.get("issuer_bank")]
+
     failures: dict[str, int] = {}
-    for r in records:
-        failures[bucket_key(r.raw_signals.get("issuer_bank", "?"), r.detected_at)] = (
-            failures.get(bucket_key(r.raw_signals.get("issuer_bank", "?"),
-                                    r.detected_at), 0) + 1
-        )
+    for r in scoped:
+        key = bucket_key(r.raw_signals["issuer_bank"], r.detected_at)
+        failures[key] = failures.get(key, 0) + 1
 
     total_failures = sum(failures.values())
     total_attempts = sum(traffic.get(k, n) for k, n in failures.items())
     baseline = total_failures / total_attempts if total_attempts else 0.0
 
     out: dict[str, CohortSignal] = {}
-    for r in records:
-        issuer = r.raw_signals.get("issuer_bank", "?")
+    for r in scoped:
+        issuer = r.raw_signals["issuer_bank"]
         key = bucket_key(issuer, r.detected_at)
         n = failures[key]
         attempts = traffic.get(key, n)

@@ -7,6 +7,7 @@ than by application discipline:
 Enforcing these in Python only would mean they hold until someone writes a bug.
 """
 
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
@@ -14,6 +15,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     Integer,
     String,
     Text,
@@ -141,6 +143,84 @@ class WebhookEventRow(Base):
     )
 
 
+class PromiseRow(Base):
+    """A commitment somebody made to pay, and what became of it.
+
+    The reason this is a table and not a flag: a promise has to be *checked*.
+    "AP said Friday" is only worth acting on if Friday passing unpaid escalates
+    the record rather than being forgotten, and that requires remembering the
+    date, what was said, and which of the three ends it reached. A promise the
+    system cannot break is not a promise, it is a delay.
+
+    `state` is OPEN | KEPT | BROKEN and only ever moves forward.
+    """
+
+    __tablename__ = "promises"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    record_id: Mapped[str] = mapped_column(String(64), index=True)
+    promised_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    promised_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    amount: Mapped[int] = mapped_column(Integer, default=0)
+    source_intent: Mapped[str] = mapped_column(String(32))
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    reply_text: Mapped[str] = mapped_column(Text, default="")
+    state: Mapped[str] = mapped_column(String(16), default="OPEN", index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RuleChangeRow(Base):
+    """Append-only, exactly like audit_log and for the same reason.
+
+    A merchant-editable rule engine is only trustworthy if you can answer "who
+    changed the value ceiling, when, and what was it before" — and a table
+    somebody can quietly UPDATE cannot answer that. The triggers below make it
+    the database's promise rather than the application's habit.
+    """
+
+    __tablename__ = "rule_change_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scope: Mapped[str] = mapped_column(String(16), index=True)   # policy | guardrail
+    key: Mapped[str] = mapped_column(String(128), index=True)
+    before: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    after: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    actor: Mapped[str] = mapped_column(String(64), default="admin")
+    note: Mapped[str] = mapped_column(Text, default="")
+    changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, index=True
+    )
+
+
+class PolicyRuleRow(Base):
+    """The policy table, once a merchant can edit it.
+
+    Whole rows as JSON rather than a column per field. A policy row is a small
+    document whose shape differs by strategy — a ladder here, a prefill there —
+    and normalising that into columns would mean a migration every time
+    policies.yaml grows a key, which is precisely the coupling `brain/rules.py`
+    exists to prevent.
+    """
+
+    __tablename__ = "policy_rules"
+    __table_args__ = (UniqueConstraint("leak_type", "root_cause",
+                                       name="uq_policy_rule"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    leak_type: Mapped[str] = mapped_column(String(32), index=True)
+    root_cause: Mapped[str] = mapped_column(String(32), index=True)
+    row: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class GuardrailConfigRow(Base):
+    __tablename__ = "guardrail_config"
+
+    name: Mapped[str] = mapped_column(String(48), primary_key=True)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class AuditLogRow(Base):
     """Append-only. Blocked actions are logged as loudly as executed ones — the
     blocks are the demo."""
@@ -181,6 +261,16 @@ _APPEND_ONLY_TRIGGERS = (
     CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
     BEFORE DELETE ON audit_log
     BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS rule_change_log_no_update
+    BEFORE UPDATE ON rule_change_log
+    BEGIN SELECT RAISE(ABORT, 'rule_change_log is append-only'); END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS rule_change_log_no_delete
+    BEFORE DELETE ON rule_change_log
+    BEGIN SELECT RAISE(ABORT, 'rule_change_log is append-only'); END;
     """,
 )
 
@@ -248,3 +338,73 @@ def reset_database() -> None:
                 # not being circumvented here - the table itself is going.
                 Base.metadata.drop_all(engine)
     init_db()
+
+
+@contextmanager
+def use_database(url: str):
+    """Point every session in the process at another database, then put it back.
+
+    `engine` and `SessionLocal` are module-level and bound at import from
+    settings, which is right for a process that serves one merchant and wrong
+    for the what-if replay, which has to run a whole arc without touching a row
+    of the live one.
+
+    Rebinding here rather than threading a session through forty call sites is
+    the trade being made, and it is worth naming: this is process-wide and NOT
+    thread-safe. The replay runs to completion inside the block, and the API
+    serialises writes behind the same busy flag `/api/run-batch` uses, so
+    nothing else is running a batch while it does. If that ever stops being
+    true, this becomes a subprocess.
+
+    The restore is in a finally, so a replay that raises still hands the process
+    back its own database — an exception must not leave the API writing to a
+    temporary file.
+    """
+    global engine, SessionLocal
+
+    saved_engine, saved_sessions = engine, SessionLocal
+    saved_url = settings.database_url
+    try:
+        engine = create_engine(url, future=True)
+        SessionLocal = sessionmaker(bind=engine, expire_on_commit=False,
+                                    future=True)
+        settings.database_url = url
+        _rebind_modules()
+        init_db()
+        yield engine
+    finally:
+        try:
+            engine.dispose()
+        except Exception:  # noqa: BLE001 - disposal must not mask a real error
+            pass
+        engine, SessionLocal = saved_engine, saved_sessions
+        settings.database_url = saved_url
+        _rebind_modules()
+
+
+# Modules that imported SessionLocal by name at import time hold their own
+# reference, and rebinding this module's global would leave them writing to the
+# old database. Listing them explicitly is uglier than a lazy accessor and much
+# easier to be sure about: a module missing from here writes to the wrong file,
+# which is exactly the failure the replay must never have.
+_REBIND_TARGETS = (
+    "reclaim.repository", "reclaim.audit.log", "reclaim.clock",
+    "reclaim.promises", "reclaim.runner", "reclaim.scoreboard",
+    "reclaim.settlement", "reclaim.baseline", "reclaim.admin",
+    "reclaim.executor.actions", "reclaim.webhooks.attribution",
+    "reclaim.brain.gate", "reclaim.brain.rules",
+    "reclaim.brain.conversation.handler",
+)
+
+
+def _rebind_modules() -> None:
+    import sys
+
+    for name in _REBIND_TARGETS:
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        if hasattr(module, "SessionLocal"):
+            module.SessionLocal = SessionLocal
+        if hasattr(module, "engine"):
+            module.engine = engine

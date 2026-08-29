@@ -37,5 +37,12 @@ os.environ["ANTHROPIC_API_KEY"] = ""
 os.environ["GEMINI_API_KEY"] = ""
 
 
+# One database for the whole suite means the suite is NOT safe to run twice at
+# once. Two pytest processes against this file fight over the SQLite lock, and
+# they do not fail fast — they retry, block, and eventually error somewhere
+# unrelated with a lock timeout, having taken hours. If you want parallel runs,
+# give each worker its own path here; do not just launch pytest twice.
+
+
 def pytest_report_header(config):
     return f"reclaim test database: {_TEST_DB}"

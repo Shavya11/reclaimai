@@ -14,7 +14,9 @@ import pytest
 
 from reclaim.brain.diagnosis.engine import diagnose_one
 from reclaim.brain.diagnosis.gemini_diagnoser import TOOL_NAME, GeminiDiagnoser
-from reclaim.brain.diagnosis.llm_diagnoser import DIAGNOSIS_TOOL, SYSTEM_PROMPT
+from reclaim.brain.diagnosis.llm_diagnoser import (
+    DIAGNOSIS_TOOL, SYSTEM_PROMPT, prompt_for, tool_for,
+)
 from reclaim.enums import LeakType, RootCause
 from reclaim.models import AtRiskRecord
 from reclaim.timeutil import now
@@ -63,9 +65,9 @@ class FakeClient:
         self.models = FakeModels(self)
 
 
-def _record(reason="payment_failed"):
+def _record(reason="payment_failed", leak_type=LeakType.FAILED_PAYMENT):
     return AtRiskRecord(
-        id="R1", leak_type=LeakType.FAILED_PAYMENT, amount=12400,
+        id="R1", leak_type=leak_type, amount=12400,
         counterparty_id="C1", source_ref="pay_1", detected_at=now(),
         raw_signals={
             "issuer_bank": "HDFC", "method": "card", "attempt_number": 1,
@@ -92,18 +94,37 @@ def test_the_call_is_forced_not_offered():
 
 def test_schema_sent_to_gemini_is_the_same_closed_schema():
     """One schema, two providers. If these drift, one of them is letting the
-    model invent a root cause."""
+    model invent a root cause.
+
+    Compared per record rather than against the module constant, because the
+    enum is narrowed to the causes the record's leak type can actually have.
+    Both providers must narrow it identically — a provider that skipped the
+    narrowing would be offering causes the policy table has no row for."""
+    record = _record()
     client = FakeClient()
-    GeminiDiagnoser(client=client, model="m")(_record())
+    GeminiDiagnoser(client=client, model="m")(record)
     decl = client.requests[0]["config"].tools[0].function_declarations[0]
     assert decl.name == DIAGNOSIS_TOOL["name"]
-    assert decl.parameters_json_schema == DIAGNOSIS_TOOL["input_schema"]
+    assert decl.parameters_json_schema == tool_for(record)["input_schema"]
+
+
+def test_the_offered_enum_is_always_a_subset_of_the_closed_set():
+    """Narrowing may only ever remove members. A leak type that somehow added
+    one would be a cause with no policy row and no outcome probability."""
+    every = set(DIAGNOSIS_TOOL["input_schema"]["properties"]["root_cause"]["enum"])
+    for leak in LeakType:
+        offered = set(
+            tool_for(_record(leak_type=leak))
+            ["input_schema"]["properties"]["root_cause"]["enum"]
+        )
+        assert offered and offered <= every, leak
 
 
 def test_same_system_prompt_as_the_anthropic_path():
+    record = _record()
     client = FakeClient()
-    GeminiDiagnoser(client=client, model="m")(_record())
-    assert client.requests[0]["config"].system_instruction == SYSTEM_PROMPT
+    GeminiDiagnoser(client=client, model="m")(record)
+    assert client.requests[0]["config"].system_instruction == prompt_for(record)
 
 
 # --- validation and degradation ---------------------------------------------

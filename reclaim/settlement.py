@@ -31,6 +31,7 @@ from .config import settings
 from .db import AtRiskRecordRow, InterventionRow, SessionLocal, init_db
 from .enums import ActionType, RootCause
 from .synthetic import razorpay_payloads as payloads
+from .synthetic import replies as reply_fixture
 from .synthetic.outcomes import probability
 from .webhooks import receive, sign
 from .webhooks.attribution import RESULT_RECOVERED, mark_no_response
@@ -53,6 +54,11 @@ class SettlementResult:
     unattributed: int = 0
     duplicates: int = 0
     events: list[dict[str, Any]] = field(default_factory=list)
+    # Replies raised by this settlement, record_id -> text. Handed back rather
+    # than handled here: settlement's job ends at "they did not pay, and they
+    # said this". Reading it is the conversation layer's job and it needs a
+    # model, which this module deliberately has no access to.
+    replies: dict[str, str] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +69,7 @@ class SettlementResult:
             "failed_again": self.failed_again,
             "unattributed": self.unattributed,
             "duplicates": self.duplicates,
+            "replies": len(self.replies),
         }
 
 
@@ -107,6 +114,10 @@ def settle(
     secret = settings.webhook_secret if secret is None else secret
     result = SettlementResult()
 
+    from .promises import open_promises
+
+    promised = set(open_promises())
+
     for item in _pending():
         result.pending += 1
         rid = item["record_id"]
@@ -127,8 +138,13 @@ def settle(
         # difference in strategy, not a difference in luck, which is the only
         # way the comparison means anything.
         rng = random.Random(f"{seed}:{rid}:{item['attempt_number']}")
+        # A record acted on inside its promised window is being paid because
+        # somebody said they would, not because it is the Nth rung of a ladder.
+        # Promises are kept about three times in five, and that figure — not the
+        # cause's base rate — is what the outcome turns on.
         p = probability(cause, action=action, attempt_number=item["attempt_number"],
-                        in_salary_window=in_salary_window)
+                        in_salary_window=in_salary_window,
+                        on_promised_date=rid in promised)
         paid = rng.random() < p
 
         ref = item["razorpay_ref"]
@@ -159,6 +175,14 @@ def settle(
                              reason=f"Link {ref} delivered; not paid "
                                     f"(modelled p={p:.2f} for {cause.value}).")
             result.no_response += 1
+            # Not paying and saying nothing are different events, and the
+            # difference is most of the value in receivables: a buyer who
+            # answers "friday tak ho jayega" is worth going quiet for, and one
+            # who answers nothing is worth climbing the ladder for.
+            said = reply_fixture.draw(rid, cause, seed=seed,
+                                      attempt=item["attempt_number"])
+            if said:
+                result.replies[rid] = said
             continue
 
         reception = _deliver(body, event_id=f"evt_{item['id']}_{event}",
@@ -190,3 +214,102 @@ def recovered_total() -> int:
             amount for (amount,) in session.query(InterventionRow.recovered_amount)
             .filter(InterventionRow.result == RESULT_RECOVERED).all()
         )
+
+
+def settle_promises(truth: dict[str, RootCause], *, seed: int = 42,
+                    at=None, secret: str | None = None) -> dict[str, int]:
+    """Decide whether the buyers who promised actually paid, on their date.
+
+    This function exists because of a gap that only appears once the promise
+    guardrail works. A promise SUPPRESSES contact, so between the promise and
+    its date the agent fires nothing, so there is no pending intervention for
+    the ordinary settlement path to resolve — and every promise would come due
+    with the record still unpaid and be marked broken. A 62% keep rate would
+    read as 0%, and the feature would look like a failure of the customers
+    rather than of the simulation.
+
+    What actually happens in the world is simpler than the bug: the buyer
+    already has the payment link the agent sent them, and on the day they said,
+    some of them use it. So a kept promise is delivered as a real
+    `payment_link.paid` against the intervention that minted that link — through
+    the same signed, verified, deduplicated path every other outcome takes.
+    Nothing here marks a record recovered directly; the webhook does, or nothing
+    does.
+
+    `mark_no_response` on that intervention is not an obstacle: attribution
+    deliberately treats only money already counted as untouchable, so an
+    intervention that went unanswered in week one can still be the one that
+    recovers in week three. That is what a payment link is.
+    """
+    from .promises import open_promises
+    from .db import PromiseRow
+
+    init_db()
+    secret = settings.webhook_secret if secret is None else secret
+    at = at or _now()
+    tally = {"due": 0, "paid": 0, "unpaid": 0, "unattributable": 0}
+
+    with SessionLocal() as session:
+        due = [(p.id, p.record_id, p.promised_for) for p in
+               session.query(PromiseRow)
+               .filter(PromiseRow.state == "OPEN")
+               .filter(PromiseRow.promised_for <= at)
+               .order_by(PromiseRow.id).all()]
+
+    for promise_id, record_id, promised_for in due:
+        tally["due"] += 1
+        cause = truth.get(record_id, RootCause.UNKNOWN)
+
+        # Keyed on the promise, not the attempt: a promise is one event and it
+        # is kept or not once. Drawing on the attempt number would re-roll the
+        # same commitment every tick until it happened to succeed.
+        rng = random.Random(f"promise:{seed}:{record_id}:{promise_id}")
+        if rng.random() >= probability(cause, action=ActionType.SEND_LINK,
+                                       on_promised_date=True):
+            tally["unpaid"] += 1
+            continue
+
+        with SessionLocal() as session:
+            row = (session.query(InterventionRow, AtRiskRecordRow)
+                   .join(AtRiskRecordRow,
+                         AtRiskRecordRow.id == InterventionRow.record_id)
+                   .filter(InterventionRow.record_id == record_id)
+                   .filter(InterventionRow.razorpay_ref.isnot(None))
+                   .filter(InterventionRow.outcome == "EXECUTED")
+                   .order_by(InterventionRow.id.desc()).first())
+            if row is None:
+                # Promised against a record we never actually sent anything for.
+                # Nothing to attribute to, and inventing a reference would be
+                # inventing a recovery.
+                tally["unattributable"] += 1
+                continue
+            intervention, record = row
+            ref, amount = intervention.razorpay_ref, record.amount
+            attempt, iv_id = intervention.attempt_number, intervention.id
+            silent = intervention.action_type == ActionType.SILENT_RETRY.value
+
+        payment_id = f"pay_{rng.getrandbits(48):012x}"
+        if silent:
+            body = payloads.order_paid(order_id=ref, payment_id=payment_id,
+                                       amount=amount, record_id=record_id)
+            event = "order.paid"
+        else:
+            body = payloads.payment_link_paid(
+                link_id=ref, payment_id=payment_id, amount=amount,
+                record_id=record_id, attempt=attempt)
+            event = "payment_link.paid"
+
+        reception = _deliver(body, event_id=f"evt_promise_{promise_id}_{event}",
+                             secret=secret)
+        if reception.outcome == "PROCESSED":
+            tally["paid"] += 1
+        else:
+            tally["unattributable"] += 1
+
+    return tally
+
+
+def _now():
+    from .clock import now as clock_now
+
+    return clock_now()

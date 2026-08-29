@@ -23,6 +23,7 @@ at_risk == recovered + open + unrecoverable, always. `cli verify` asserts it.
 
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import desc, func
@@ -35,8 +36,10 @@ from .db import (
     SessionLocal,
     init_db,
 )
-from .enums import NEVER_RETRY, RecordState, RootCause, Stage
+from .enums import LeakType, NEVER_RETRY, RecordState, RootCause, Stage
 from .money import format_inr, format_inr_short
+from .clock import now
+from .timeutil import to_ist
 from .webhooks.attribution import RESULT_RECOVERED
 
 # Causes the policy table refuses to chase. Their money is written off on
@@ -92,6 +95,17 @@ class Scoreboard:
     contacts: int = 0
     silent_retries: int = 0
     webhooks_attributed: int = 0
+    # V2 receivables. Kept alongside the payments figures rather than in a
+    # separate scoreboard, because "what did the agent recover" is one question
+    # and answering it in two places invites quoting whichever half looks best.
+    invoice_records: int = 0
+    invoice_at_risk_paise: int = 0
+    invoice_recovered_paise: int = 0
+    invoice_recovered_records: int = 0
+    dso_before: float = 0.0
+    dso_after: float = 0.0
+    promises: dict[str, int] = field(default_factory=dict)
+    replies_read: int = 0
     label: str = "ReclaimAI"
 
     @property
@@ -109,6 +123,22 @@ class Scoreboard:
     @property
     def guardrails_total(self) -> int:
         return sum(self.guardrails_fired.values())
+
+    @property
+    def invoice_recovery_rate(self) -> float:
+        return (self.invoice_recovered_paise / self.invoice_at_risk_paise
+                if self.invoice_at_risk_paise else 0.0)
+
+    @property
+    def dso_improvement(self) -> float:
+        """Days taken off the average. The number a finance team actually cares
+        about — a recovery rate is our metric, DSO is theirs."""
+        return round(self.dso_before - self.dso_after, 1)
+
+    @property
+    def promises_kept_rate(self) -> float:
+        made = self.promises.get("KEPT", 0) + self.promises.get("BROKEN", 0)
+        return self.promises.get("KEPT", 0) / made if made else 0.0
 
     @property
     def balances(self) -> bool:
@@ -146,6 +176,19 @@ class Scoreboard:
             "silent_retries": self.silent_retries,
             "contacts_per_recovery": round(self.contacts_per_recovery, 2),
             "webhooks_attributed": self.webhooks_attributed,
+            "invoice_records": self.invoice_records,
+            "invoice_at_risk_paise": self.invoice_at_risk_paise,
+            "invoice_recovered_paise": self.invoice_recovered_paise,
+            "invoice_recovered_records": self.invoice_recovered_records,
+            "invoice_at_risk_display": format_inr(self.invoice_at_risk_paise),
+            "invoice_recovered_display": format_inr(self.invoice_recovered_paise),
+            "invoice_recovery_rate": round(self.invoice_recovery_rate, 4),
+            "dso_before": round(self.dso_before, 1),
+            "dso_after": round(self.dso_after, 1),
+            "dso_improvement": self.dso_improvement,
+            "promises": dict(self.promises),
+            "promises_kept_rate": round(self.promises_kept_rate, 4),
+            "replies_read": self.replies_read,
             "balances": self.balances,
         }
 
@@ -217,6 +260,14 @@ def compute(label: str = "ReclaimAI") -> Scoreboard:
             sorted(((g, int(n)) for g, n, _ in blocked), key=lambda kv: -kv[1]))
         board.guardrails_records = {g: int(d) for g, _, d in blocked}
 
+        board.replies_read = (session.query(AuditLogRow)
+                              .filter(AuditLogRow.stage == Stage.REPLY.value)
+                              .count())
+
+    from .promises import counts as promise_counts
+
+    board.promises = promise_counts()
+
     lines: dict[str, CauseLine] = {}
     for row in records:
         cause = causes.get(row.id, RootCause.UNKNOWN.value)
@@ -224,6 +275,12 @@ def compute(label: str = "ReclaimAI") -> Scoreboard:
 
         board.records += 1
         board.at_risk_paise += row.amount
+        if row.leak_type == LeakType.OVERDUE_INVOICE.value:
+            board.invoice_records += 1
+            board.invoice_at_risk_paise += row.amount
+            board.invoice_recovered_paise += recovered_by_record.get(row.id, 0)
+            if recovered_by_record.get(row.id):
+                board.invoice_recovered_records += 1
         line.records += 1
         line.at_risk_paise += row.amount
         line.contacts += contacts_by_record.get(row.id, 0)
@@ -248,4 +305,67 @@ def compute(label: str = "ReclaimAI") -> Scoreboard:
 
     board.by_root_cause = sorted(
         lines.values(), key=lambda c: (-c.recovered_paise, -c.at_risk_paise))
+    board.dso_before, board.dso_after = _dso()
     return board
+
+
+def _dso() -> tuple[float, float]:
+    """Days sales outstanding, before the agent and after it.
+
+    Value-weighted, because a ₹12 lakh invoice sitting 60 days is not the same
+    problem as a ₹25,000 one and averaging them per-invoice says it is.
+
+    `before` ages every overdue invoice as it stands today — the merchant's
+    position with nobody chasing. `after` ages the same book with the recovered
+    ones stopped at the day they actually settled. The difference is days taken
+    off the average, which is the number a finance team recognises; a recovery
+    rate is ours.
+
+    Read against the DEMO clock, not the wall clock, because that is the clock
+    attribution stamps settlements with. Mixing the two makes every invoice
+    settled during a time-travelled arc look as though it settled two months
+    before it was issued.
+
+    Returns (0, 0) with no receivables rather than dividing by zero, so a
+    payments-only batch reports no DSO instead of a fake one.
+    """
+    now_ist = now()
+    with SessionLocal() as session:
+        rows = (session.query(AtRiskRecordRow)
+                .filter(AtRiskRecordRow.leak_type
+                        == LeakType.OVERDUE_INVOICE.value).all())
+        if not rows:
+            return 0.0, 0.0
+
+        settled: dict[str, Any] = {}
+        for record_id, when in (
+            session.query(InterventionRow.record_id,
+                          func.min(InterventionRow.settled_at))
+            .filter(InterventionRow.result == RESULT_RECOVERED)
+            .group_by(InterventionRow.record_id).all()
+        ):
+            if when is not None:
+                settled[record_id] = to_ist(when)
+
+    weighted_before = weighted_after = 0.0
+    total = 0
+    for row in rows:
+        due = to_ist(row.due_at) if row.due_at else to_ist(row.detected_at)
+        issued = row.raw_signals.get("issued_at") if row.raw_signals else None
+        try:
+            start = to_ist(datetime.fromisoformat(issued)) if issued else due
+        except (TypeError, ValueError):
+            start = due
+
+        open_days = max(0.0, (now_ist - start).total_seconds() / 86400)
+        closed = settled.get(row.id)
+        paid_days = (max(0.0, (closed - start).total_seconds() / 86400)
+                     if closed else open_days)
+
+        weighted_before += open_days * row.amount
+        weighted_after += paid_days * row.amount
+        total += row.amount
+
+    if not total:
+        return 0.0, 0.0
+    return weighted_before / total, weighted_after / total

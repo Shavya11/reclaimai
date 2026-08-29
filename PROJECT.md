@@ -493,39 +493,109 @@ Test mode throughout (`rzp_test_...`).
 
 ## 12. V1 / V2 split
 
-### V1 (these 4 days) — everything above
+### V1 (the four days) — everything above
 Three leak types, both diagnosis layers, full 13 guardrails + tests, execution,
 webhooks, dashboard, audit trail, baseline comparison.
 
-Rules are **hardcoded / static YAML loaded at startup**. Not admin-editable.
+Rules were **static YAML loaded at startup**. Not admin-editable.
 
-### V2 (after the buildathon)
+---
 
-**a) Dynamic rule configuration (~2–3h)**
-- DB tables: `policy_rules`, `guardrail_config`, `rule_change_log`
-- Hot reload (mtime watch or cache TTL)
-- Admin API: `POST /admin/policy/{root_cause}`, `POST /admin/guardrail/{rule_name}`
-- Admin UI: policies / guardrails / change-history screens
-- Merchants tune: value ceiling, frequency cap, quiet hours, max attempts, schedules
-- **Architect for it now:** keep all rules behind ONE loader module so V2 swaps
-  the source without touching diagnosis/policy/guardrail code
+### V2 — what shipped
 
-**b) B2B receivables (~4–6h)** — cheapest V2, reuses ~75% of the engine
-- New detector: overdue invoices (Razorpay Invoices API)
-- New causes: invoice never received, disputed, awaiting approval, cash crunch, stall
-- **Promise-to-pay state machine** — "AP said Friday" → agent goes quiet → Friday
-  passes unpaid → escalate a rung. Great demo beat.
-- Dunning ladder: day 1 polite → day 7 firmer + link → day 15 CC finance manager →
-  day 30 human account manager, agent stops
-- Guardrails engine unchanged (95% reuse), just different config
-- Adds DSO to the scoreboard
+All of (a) and (b) below are built and tested. (c) remains a slide, deliberately,
+and §12c explains why it is a better slide now than it was.
 
-**c) Hinglish voice (~1.5–2 days) — ROADMAP SLIDE ONLY, DO NOT BUILD**
-Telephony + STT/TTS + turn-taking + code-switching + heavy DND/TRAI/consent load +
-highest live-demo risk. Say instead: *"the channel layer is abstracted; voice is a new
-channel implementation, and the guardrails — DND, call windows, consent — already apply."*
-Cheap middle ground if ever wanted: build the conversation policy + promise-to-pay
-extraction over a text transcript (~3h) instead of live audio.
+**a) Dynamic rule configuration — SHIPPED**
+- `policy_rules`, `guardrail_config`, `rule_change_log` in `db.py`.
+  `rule_change_log` carries the same append-only triggers as `audit_log`.
+- `brain/rules.py` reads the database first and falls back to the YAML, which
+  remains the default and the reset target. **`policies()`, `guardrail_config()`,
+  `policy_for()` and `threshold()` kept their exact signatures, so not one call
+  site in diagnosis, policy or the guardrails changed.** That was V1's bet and
+  this is where it paid.
+- Hot reload is a generation counter bumped on write, not an mtime watch: there
+  is no window in which half a batch reads the old ceiling and half the new one.
+- Admin API: `GET /api/admin/rules`, `POST /api/admin/policy/{leak}/{cause}`,
+  `POST /api/admin/guardrail/{name}`, `GET /api/admin/changes`,
+  `POST /api/admin/reset`, `POST /api/admin/replay`.
+- `brain/validation.py` is the load-bearing part. A merchant must not be able to
+  type a rule that kills tonight's batch, so every edit is validated by REUSING
+  the code that will consume it — a schedule token is valid if `schedule.resolve`
+  parses it, a strategy if `STRATEGY_TO_ACTION` maps it. Unknown keys are refused
+  rather than stored and never read. Bounds are enforced on thresholds, because
+  a frequency cap of 500 parses perfectly and is a licence to spam.
+- **What-if replay** (`whatif.py`) — not in the original plan, and the reason the
+  studio is worth having. Change a threshold and replay the SAME batch under both
+  rule sets, with the difference in rupees, messages and human escalations.
+  Side-effect-free by construction: it runs the real runner, gate, executor and
+  settlement against a scratch SQLite file that is then deleted. Diagnoses are
+  frozen from the audit log, because rules affect DECIDE/GUARDRAIL/EXECUTE and
+  never DIAGNOSE — which is what makes it free AND what makes the comparison
+  valid. `cli verify` asserts the live row counts and the demo clock are
+  unchanged across a replay.
+
+**b) B2B receivables + promise-to-pay — SHIPPED**
+- `detectors/overdue_invoices.py` is the payments detector with one enum member
+  changed. No schema migration; `AtRiskRecord` stayed generic exactly as §3 said
+  it would.
+- Five new causes: `INVOICE_NOT_RECEIVED`, `INVOICE_DISPUTED`, `AWAITING_APPROVAL`,
+  `BUYER_CASH_CRUNCH`, `PAYMENT_STALLED`.
+- **A layer 1 for receivables** (`diagnosis/receivables.py`). Invoices have no
+  error string, which looks like a reason to send them all to the model and is
+  not: a dispute flag is a person's recorded decision, a partial payment either
+  arrived or did not, and whether an invoice is late by the buyer's OWN average
+  is arithmetic. It resolves ~48% of the book at 100% accuracy and defers the
+  genuinely ambiguous pair — an invoice nobody received and one that has simply
+  stalled look identical from the ledger.
+- Dunning ladder as data. `ladder:` is the one new policy field: day 1 polite,
+  day 7 firmer with a link, day 15 with the finance manager copied, day 30 a
+  human account manager while the agent stops.
+- **Promise-to-pay is a GUARDRAIL, not a branch in the runner.** Guardrail 14,
+  `promise_window`, blocks contact on a record with an open, unexpired promise.
+  Expressed there it answers the same question every other guardrail answers, it
+  fails closed, it lands in the audit trail as a block with a readable reason, it
+  appears in the guardrail breakdown next to quiet hours, and any channel added
+  later — including voice — inherits it without knowing it exists.
+- Broken promise → `PAYMENT_STALLED` → the ladder climbs a rung. A promise is
+  KEPT only if the record actually recovered; taking the customer's word for it
+  is how a scoreboard starts counting sentences as rupees.
+- DSO on the scoreboard, value-weighted, alongside promises made/kept/broken.
+
+**The conversation layer** — `brain/conversation/`. The model gained a second
+job and it is the same job as the first: turn a sentence into one label from a
+closed enum (`ReplyIntent`, seven members) with an honest confidence. A
+deterministic table in `handler.py` decides what the label MEANS, exactly as
+`policy/` does for `RootCause`. Five of the seven intents route to a person — a
+partial-payment offer is a commercial negotiation, a dispute is a conversation
+about what is owed, and "already paid" is a reconciliation.
+
+The one field worth stating out loud: the model may extract a DATE from
+"we'll pay by Friday", because that is what a language model is for. It is not
+trusted with that date. `promises.validate_date` refuses anything in the past,
+anything past the configured horizon and anything unparseable, and a refused date
+becomes a reply a human reads rather than a record the agent puts to sleep.
+**That is the rule about money, applied to time** — and in receivables, time is
+how the money gets away.
+
+**c) Hinglish voice — STILL A SLIDE, and now a better one**
+
+Not built, for the reasons the original entry gives: telephony + STT/TTS +
+turn-taking + heavy DND/TRAI/consent load + the highest live-demo risk in the
+project.
+
+But the "cheap middle ground" the original entry described — the conversation
+policy and promise extraction over text — is exactly what shipped above, and it
+changes what the slide can honestly claim. The hard part of a Hinglish voice
+agent is understanding "sir friday tak ho jayega" and knowing that it is a
+commitment, that it needs a date, and that the date must be validated before
+anything acts on it. That part exists, is tested, and runs on the replies the
+fixture actually produces. What is missing is audio.
+
+Say: *"the channel layer is abstracted and the conversation policy is built. Voice
+is a new channel implementation over an intent extractor that already works, and
+the guardrails — DND, call windows, consent, and now the promise window — already
+apply to it."*
 
 ---
 

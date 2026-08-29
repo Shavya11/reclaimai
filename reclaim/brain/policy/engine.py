@@ -25,6 +25,10 @@ STRATEGY_TO_ACTION: dict[str, ActionType] = {
     "request_new_method": ActionType.SEND_LINK,
     "friction_reduction": ActionType.SEND_LINK,
     "no_auto_action": ActionType.ESCALATE,
+    # V2. The base action a dunning step takes when the ladder does not name
+    # one; every step in policies.yaml names one, so this is the fallback that
+    # keeps a malformed ladder harmless rather than fatal.
+    "dunning_ladder": ActionType.NOTIFY,
 }
 
 
@@ -91,11 +95,58 @@ def decide(
         if action_type is ActionType.RETRY:
             action_type = ActionType.NOTIFY
 
+    # A dunning ladder escalates in tone and in recipient as it climbs, and the
+    # rung is a function of the attempt number. Reading it here keeps the
+    # sequence in policies.yaml where a merchant can argue with it, rather than
+    # as a branch nobody can see from outside the code.
+    step = _ladder_step(row, attempt)
+    if step:
+        if step.get("action"):
+            try:
+                action_type = ActionType(str(step["action"]))
+            except ValueError as exc:
+                raise PolicyError(
+                    f"{policy_ref}: ladder step {attempt} names unknown action "
+                    f"{step['action']!r}") from exc
+        if step.get("channel"):
+            channel = Channel(str(step["channel"]))
+        if action_type is ActionType.ESCALATE:
+            return _escalate(record, attempt, policy_ref,
+                             str(step.get("rationale")
+                                 or row.get("rationale", "")), frm)
+
     return ProposedAction(
         record_id=record.id, action_type=action_type, channel=channel,
         scheduled_for=when, attempt_number=attempt, policy_ref=policy_ref,
         rationale=str(row.get("rationale", "")).strip(), amount=record.amount,
     )
+
+
+def _ladder_step(row: dict, attempt: int) -> dict:
+    """The rung for this attempt, or {} when the row is not a ladder.
+
+    Out-of-range is empty rather than an error: `max_attempts` already stopped
+    the run before here, and a ladder shorter than its schedule should degrade
+    to the row's own settings, not crash a batch."""
+    ladder = row.get("ladder") or []
+    if not isinstance(ladder, list) or not (1 <= attempt <= len(ladder)):
+        return {}
+    step = ladder[attempt - 1]
+    return step if isinstance(step, dict) else {}
+
+
+def ladder_step(policy_ref: str, attempt: int) -> dict:
+    """Public read for the executor: tone and cc for this rung."""
+    leak, _, cause = policy_ref.partition(".")
+    return _ladder_step(rules.policy_for(leak, cause) or {}, attempt)
+
+
+def tone_for(policy_ref: str, attempt: int = 1) -> str:
+    """Ladder tone if the rung names one, else the row's tone, else neutral."""
+    leak, _, cause = policy_ref.partition(".")
+    row = rules.policy_for(leak, cause) or {}
+    step = _ladder_step(row, attempt)
+    return str(step.get("tone") or row.get("tone") or "neutral")
 
 
 def _escalate(record, attempt, policy_ref, rationale, frm) -> ProposedAction:

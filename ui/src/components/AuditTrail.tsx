@@ -25,6 +25,7 @@ const STAGE_TITLE: Record<string, string> = {
   DECIDE: "Decided",
   GUARDRAIL: "Guardrail",
   EXECUTE: "Executed",
+  REPLY: "They replied",
   OUTCOME: "Outcome",
 };
 
@@ -203,6 +204,7 @@ export default function AuditTrail({
                   </span>
                 </div>
                 <p className="mt-1 text-sm text-muted">{e.reason}</p>
+                {e.stage === "REPLY" && <Reply payload={e.payload} />}
                 <Payload payload={e.payload} deferred={e.deferred_until} />
               </div>
             </li>
@@ -229,6 +231,8 @@ const SHOWN = [
   "event_type",
   "requires_human",
   "simulated",
+  "intent",
+  "promised_date",
 ];
 
 function Payload({
@@ -291,5 +295,46 @@ function Sig({ k, v }: { k: string; v: string }) {
         {v}
       </dd>
     </div>
+  );
+}
+
+
+// The customer's own words, quoted.
+//
+// Every other row in this timeline is the system describing itself. This one is
+// evidence from outside it, and it is the only place a reader can check the
+// model's work directly: here is the sentence, here is the label, here is the
+// confidence, and — where the model read a date — here is whether the system
+// agreed to act on it.
+function Reply({ payload }: { payload: Record<string, unknown> }) {
+  const text = payload.reply_text as string | undefined;
+  if (!text) return null;
+
+  const confidence = typeof payload.confidence === "number" ? payload.confidence : null;
+  const quote = payload.quote as string | undefined;
+  const source = payload.source as string | undefined;
+
+  return (
+    <figure className="mt-2 rounded-2xl border border-violet/25 bg-violet/5 px-3.5 py-3">
+      <blockquote className="text-[13.5px] leading-relaxed text-ink">
+        &ldquo;{text}&rdquo;
+      </blockquote>
+      <figcaption className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-dim">
+        {payload.intent != null && (
+          <Badge tone="violet">
+            {String(payload.intent).toLowerCase().replace(/_/g, " ")}
+          </Badge>
+        )}
+        {confidence !== null && (
+          <span className="num">read at {Math.round(confidence * 100)}% confidence</span>
+        )}
+        {quote && <span>on the words &ldquo;{quote}&rdquo;</span>}
+        {source === "fallback" && (
+          <Badge tone="plain" title="No model available. Matched on keywords, deliberately below the confidence floor so a person confirms it.">
+            no model
+          </Badge>
+        )}
+      </figcaption>
+    </figure>
   );
 }

@@ -13,7 +13,9 @@ from reclaim.brain import rules
 from reclaim.brain.policy import decide
 from reclaim.brain.policy.engine import STRATEGY_TO_ACTION, prefill_method
 from reclaim.brain.policy.schedule import ScheduleError, resolve
-from reclaim.enums import ActionType, Channel, LeakType, RecordState, RootCause
+from reclaim.enums import (
+    ActionType, CAUSES_FOR_LEAK, Channel, LeakType, RecordState, RootCause,
+)
 from reclaim.models import AtRiskRecord, Diagnosis
 from reclaim.timeutil import IST
 
@@ -36,10 +38,27 @@ def _dx(cause, confidence=1.0):
 # --- rules load through one module -----------------------------------------
 
 
-def test_every_root_cause_has_a_failed_payment_policy():
-    table = rules.policies()["FAILED_PAYMENT"]
-    missing = [c.value for c in RootCause if c.value not in table]
-    assert missing == []
+def test_every_reachable_cause_has_a_policy_row():
+    """Coverage is per leak type, not global.
+
+    EXPIRED_INSTRUMENT cannot happen to an invoice and INVOICE_DISPUTED cannot
+    happen to a card, so asserting one flat list would force nonsense rows into
+    the table. CAUSES_FOR_LEAK says what is actually reachable, and this asserts
+    the table covers exactly that — no gaps, and no rows for combinations that
+    can never occur."""
+    for leak, causes in CAUSES_FOR_LEAK.items():
+        table = rules.policies()[leak.value]
+        missing = sorted(c.value for c in causes if c.value not in table)
+        extra = sorted(k for k in table if k not in {c.value for c in causes})
+        assert missing == [], f"{leak.value} has no row for {missing}"
+        assert extra == [], f"{leak.value} has unreachable rows {extra}"
+
+
+def test_every_leak_type_falls_back_to_unknown():
+    """An unmapped combination must escalate to a human, never silently do
+    nothing. policy_for() relies on an UNKNOWN row existing to do that."""
+    for leak in CAUSES_FOR_LEAK:
+        assert rules.policy_for(leak.value, "NOT_A_REAL_CAUSE") is not None
 
 
 def test_every_policy_row_states_a_rationale():

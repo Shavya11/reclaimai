@@ -21,7 +21,12 @@ from reclaim.timeutil import now
 
 @pytest.fixture(scope="module")
 def batch():
-    return generate(seed=42)
+    """The payments half. Layer 1 is a lookup over Razorpay error reasons, and
+    an invoice has no error to look up — including 60 of them would measure the
+    deterministic map against records it was never meant to resolve."""
+    return generate(seed=42, leak_types={LeakType.FAILED_PAYMENT,
+                                         LeakType.ABANDONED_CART,
+                                         LeakType.FAILED_MANDATE})
 
 
 def _record(reason=None, leak=LeakType.FAILED_PAYMENT, issuer="HDFC", **kw):
@@ -83,6 +88,28 @@ def test_outage_bucket_is_detected(batch):
     flagged = [r for r in batch.records if signals[r.id].indicates_outage]
     assert len(flagged) >= 10
     assert {signals[r.id].issuer for r in flagged} == {"HDFC"}
+
+
+def test_invoices_take_no_part_in_the_cohort_signal():
+    """An overdue invoice has no issuer and no bank attempt behind it. Bucketing
+    it anyway would put sixty records into one placeholder cohort — capable of
+    manufacturing a bank outage out of accounts-receivable data — and would drag
+    the baseline failure rate every real outage judgement divides by."""
+    full = generate(seed=42)
+    signals = compute_cohort(full.records, full.traffic)
+    invoices = [r for r in full.records
+                if r.leak_type is LeakType.OVERDUE_INVOICE]
+
+    assert invoices
+    assert not any(r.id in signals for r in invoices)
+
+    payments_only = generate(seed=42, leak_types={LeakType.FAILED_PAYMENT,
+                                                  LeakType.ABANDONED_CART,
+                                                  LeakType.FAILED_MANDATE})
+    alone = compute_cohort(payments_only.records, payments_only.traffic)
+    # The baseline must be identical with and without the invoices present.
+    assert ({k: v.baseline_rate for k, v in signals.items()}
+            == {k: v.baseline_rate for k, v in alone.items()})
 
 
 def test_outage_signal_exceeds_the_ratio_threshold(batch):

@@ -20,18 +20,20 @@ from . import audit
 from .brain import gate
 from .brain.diagnosis.engine import diagnose_batch
 from .brain.policy import decide
-from .brain.policy.engine import prefill_method
+from .brain.policy.engine import prefill_method, tone_for
 from . import clock
 from .config import settings
 from .db import AtRiskRecordRow, HumanQueueRow, SessionLocal, init_db
-from .enums import ActionType, RecordState, Stage
+from .enums import ActionType, RecordState, RootCause, Stage
 from .executor.actions import execute, executed_keys
 from .executor.channels import ChannelSender
 from .executor.razorpay_client import RazorpayClient
 from .repository import (
     last_attempt_at, load_records, save_batch, set_next_action_at,
 )
-from .settlement import SettlementResult, settle as settle_batch
+from .settlement import (
+    SettlementResult, settle as settle_batch, settle_promises,
+)
 from .clock import now
 from .synthetic import generate
 
@@ -40,7 +42,8 @@ log = logging.getLogger(__name__)
 
 # States where the agent is still the owner. Everything else belongs to a
 # human, to the customer, or to nobody.
-_AGENT_OWNED = frozenset({RecordState.AT_RISK, RecordState.IN_PROGRESS})
+_AGENT_OWNED = frozenset({RecordState.AT_RISK, RecordState.IN_PROGRESS,
+                          RecordState.PROMISED})
 _OWNED_VALUES = frozenset(s.value for s in _AGENT_OWNED)
 
 
@@ -64,6 +67,9 @@ class BatchResult:
     blocked_by: Counter = field(default_factory=Counter)
     crashed_after: int | None = None
     settlement: SettlementResult | None = None
+    promises_kept: int = 0
+    promises_broken: int = 0
+    replies: dict | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -80,6 +86,9 @@ class BatchResult:
             "blocked_by_guardrail": dict(self.blocked_by.most_common()),
             "crashed_after": self.crashed_after,
             "settlement": self.settlement.as_dict() if self.settlement else None,
+            "promises_kept": self.promises_kept,
+            "promises_broken": self.promises_broken,
+            "replies": self.replies,
         }
 
 
@@ -93,11 +102,13 @@ def run_batch(
     dry_run: bool | None = None,
     settle: bool = True,
     client=None,
+    extractor=None,
+    leak_types=None,
 ) -> BatchResult:
     init_db()
     frm = frm or now()
     seed = seed if seed is not None else settings.seed
-    batch = generate(seed=seed)
+    batch = generate(seed=seed, leak_types=leak_types)
     if reseed:
         save_batch(batch.records, batch.customers)
         records = batch.records
@@ -112,7 +123,29 @@ def run_batch(
         stored = load_records(state=None)
         records = [r for r in stored if r.state in _AGENT_OWNED] or batch.records
 
+    # Promises are resolved before anything is proposed. A promise that fell due
+    # this morning has to be awake by the time the ladder looks at it, or the
+    # record sits out a whole tick in a state nobody is working — and on a
+    # weekly ladder that is a week of silence bought by a promise already broken.
+    # Before promises are judged, the buyers who kept them have to be able to
+    # have paid. Ordering matters and it is not arbitrary: resolve_promises
+    # reads the record state, and if nothing has had a chance to settle by then
+    # every promise is broken by construction.
+    if settle:
+        settle_promises(batch.truth, seed=seed, at=frm)
+    kept, broken = resolve_promises(at=frm)
+    records = _refresh(records) if (kept or broken) else records
+
     diagnoses, signals = diagnose_batch(records, batch.traffic, llm=llm)
+
+    # A broken promise is not the diagnosis the record arrived with. Somebody
+    # committed, the date passed, and nothing came — that is a stall, and the
+    # stall ladder is what the record now belongs on. Overriding here rather
+    # than in the diagnosis layer keeps layer 2 answering only the question it
+    # was asked, which is what the error and the ageing say.
+    for record_id in broken:
+        if record_id in diagnoses:
+            diagnoses[record_id] = _broken_promise_diagnosis(record_id)
     for record in records:
         d = diagnoses[record.id]
         audit.log(record.id, Stage.DIAGNOSE, d.root_cause.value, d.reasoning,
@@ -218,7 +251,8 @@ def run_batch(
             customer=customers.get(record.counterparty_id),
             root_cause=diagnoses[action.record_id].root_cause,
             prefill_method=prefill_method(action.policy_ref),
-            client=client, sender=sender,
+            tone=tone_for(action.policy_ref, action.attempt_number),
+            client=client, sender=sender, at=frm,
         )
 
         if execution.skipped:
@@ -248,10 +282,74 @@ def run_batch(
                 f"re-run and every claimed key will be skipped."
             )
 
+    result.promises_kept, result.promises_broken = len(kept), len(broken)
+
     if settle:
         result.settlement = settle_batch(batch.truth, seed=seed)
 
+        # Reading the replies is the last thing a tick does. It has to come
+        # after settlement, because a reply is a response to a contact that has
+        # already been delivered and settled — and it has to come before the
+        # next tick, because a promise made now must be standing before the
+        # ladder next looks at the record.
+        if result.settlement.replies:
+            from .brain.conversation import process_replies
+
+            reply_result = process_replies(
+                result.settlement.replies, {r.id: r for r in records},
+                extractor=extractor, at=frm,
+            )
+            result.replies = reply_result.as_dict()
+
     return result
+
+
+def resolve_promises(*, at: datetime | None = None) -> tuple[list[str], list[str]]:
+    """Close out every promise whose date has passed, and say so loudly.
+
+    Both halves are audited. A kept promise is the system's best outcome and a
+    broken one is the reason the state machine exists at all; a trail that
+    recorded only the breaches would read as a system that assumes bad faith,
+    and one that recorded neither would make "the agent went quiet for a week"
+    indistinguishable from "the agent forgot".
+    """
+    from .promises import settle_due
+
+    kept, broken = settle_due(at)
+    for record_id in kept:
+        audit.log(record_id, Stage.OUTCOME, "PROMISE_KEPT",
+                  "Payment arrived by the promised date. Going quiet was the "
+                  "right call and it is what recovered this.")
+    for record_id in broken:
+        audit.log(record_id, Stage.OUTCOME, "PROMISE_BROKEN",
+                  "The promised date passed unpaid. The record returns to the "
+                  "ladder one rung further along, which is what a promise costs "
+                  "when it is not kept.")
+    return kept, broken
+
+
+def _broken_promise_diagnosis(record_id: str):
+    from .models import Diagnosis
+
+    return Diagnosis(
+        root_cause=RootCause.PAYMENT_STALLED,
+        confidence=1.0,
+        reasoning="A promise to pay was made and the date passed unpaid. This "
+                  "is no longer an approval cycle or a cash-flow gap — it has "
+                  "stalled, and the stall ladder is firmer than the one it was "
+                  "on.",
+        recoverable=True,
+        evidence_used=[f"promise.broken={record_id}"],
+        source="deterministic",
+    )
+
+
+def _refresh(records):
+    """Re-read the records a promise transition just moved. Cheaper and safer
+    than mutating the in-memory copies, which would leave the objects and the
+    rows disagreeing about state for the rest of the tick."""
+    stored = {r.id: r for r in load_records(state=None)}
+    return [stored.get(r.id, r) for r in records]
 
 
 def _close(action, result, reason: str | None = None) -> None:
@@ -301,6 +399,7 @@ def tick(
     llm=None,
     dry_run: bool | None = None,
     client=None,
+    extractor=None,
 ) -> tuple[BatchResult, datetime]:
     """Advance the demo clock and run the pipeline again over stored state.
 
@@ -313,7 +412,7 @@ def tick(
         clock.advance(advance)
     at = clock.now()
     return run_batch(seed=seed, frm=at, llm=llm, reseed=False,
-                     dry_run=dry_run, client=client), at
+                     dry_run=dry_run, client=client, extractor=extractor), at
 
 
 # The moments the policy table actually talks about. Walking these in order

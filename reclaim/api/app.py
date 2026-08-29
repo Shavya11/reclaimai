@@ -17,7 +17,7 @@ import threading
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import desc
@@ -26,9 +26,11 @@ from .. import audit, clock
 from ..config import ROOT, settings
 from ..db import (
     AtRiskRecordRow,
+    AuditLogRow,
     CustomerRow,
     HumanQueueRow,
     InterventionRow,
+    PromiseRow,
     SessionLocal,
     WebhookEventRow,
     init_db,
@@ -93,6 +95,29 @@ def _in_background(name: str, work) -> bool:
     return True
 
 
+def _begin(name: str) -> bool:
+    """Claim the same lock the background arc uses, synchronously.
+
+    The what-if replay needs it for a stronger reason than the arc does: it
+    rebinds the process-wide database handle to a scratch file for the duration.
+    A batch running on another thread while that is true would write its rows
+    into the temporary database and lose them, and the scoreboard would come
+    back missing work that appeared to have succeeded.
+    """
+    if not _seed_lock.acquire(blocking=False):
+        return False
+    _set_stage(name, active=True)
+    return True
+
+
+def _end() -> None:
+    _set_stage(None, active=False)
+    try:
+        _seed_lock.release()
+    except RuntimeError:
+        pass
+
+
 def _walk_arc(*, reset: bool, seed: int | None = None) -> None:
     """The whole demo arc, not just the first batch.
 
@@ -109,12 +134,14 @@ def _walk_arc(*, reset: bool, seed: int | None = None) -> None:
         clock.reset()
 
     llm = _llm()
-    log.info("walking the demo arc (layer 2 %s)", "on" if llm else "off")
+    extractor = _extractor()
+    log.info("walking the demo arc (layer 2 %s, replies %s)",
+             "on" if llm else "off", "on" if extractor else "off")
     _set_stage("running the batch", active=True)
-    run_batch(seed=seed, llm=llm, dry_run=None)
+    run_batch(seed=seed, llm=llm, extractor=extractor, dry_run=None)
     for step in DEMO_ARC + ["+7d"] * 3:
         _set_stage(f"advancing {step}", active=True)
-        tick(advance=step, seed=seed, llm=llm, dry_run=None)
+        tick(advance=step, seed=seed, llm=llm, extractor=extractor, dry_run=None)
 
 
 def _seed_if_empty() -> None:
@@ -546,7 +573,8 @@ def api_tick(advance: str = Query(default="24h")) -> dict[str, Any]:
 
     started = _in_background(
         f"advancing {advance}",
-        lambda: tick(advance=advance, llm=_llm(), dry_run=None))
+        lambda: tick(advance=advance, llm=_llm(), extractor=_extractor(),
+                     dry_run=None))
     if not started:
         raise HTTPException(
             status_code=409,
@@ -582,6 +610,160 @@ def _llm():
 
     gem = GeminiDiagnoser()
     return gem if gem.available else None
+
+
+def _extractor():
+    """The reply reader. None when there is no key, in which case every reply
+    lands below the confidence floor and reaches a human — degraded, and
+    correct."""
+    from ..brain.conversation import build_extractor
+
+    return build_extractor()
+
+
+# --- V2: the rules studio -----------------------------------------------------
+#
+# Read endpoints are open; every write validates through brain/validation.py and
+# appends to the append-only change log. A rule that fails validation is a 422
+# with every problem listed, not a 500 and not a partial save.
+
+
+@app.get("/api/admin/rules")
+def admin_rules() -> dict[str, Any]:
+    from .. import admin
+
+    return admin.snapshot()
+
+
+@app.post("/api/admin/policy/{leak_type}/{root_cause}")
+def admin_set_policy(leak_type: str, root_cause: str,
+                     body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    from .. import admin
+
+    row = dict(body.get("row") or body)
+    note = str(body.pop("note", "")) if isinstance(body, dict) else ""
+    row.pop("note", None)
+    try:
+        saved = admin.set_policy(leak_type, root_cause, row, note=note)
+    except admin.RuleInvalid as exc:
+        raise HTTPException(status_code=422,
+                            detail={"problems": exc.problems}) from exc
+    return {"leak_type": leak_type, "root_cause": root_cause, "row": saved}
+
+
+@app.post("/api/admin/guardrail/{name}")
+def admin_set_guardrail(name: str,
+                        body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    from .. import admin
+
+    config = dict(body.get("config") or body)
+    note = str(config.pop("note", ""))
+    try:
+        saved = admin.set_guardrail(name, config, note=note)
+    except admin.RuleInvalid as exc:
+        raise HTTPException(status_code=422,
+                            detail={"problems": exc.problems}) from exc
+    return {"name": name, "config": saved}
+
+
+@app.post("/api/admin/reset")
+def admin_reset() -> dict[str, Any]:
+    from .. import admin
+
+    return {"restored": admin.reset()}
+
+
+@app.get("/api/admin/changes")
+def admin_changes(limit: int = Query(default=200, le=1000)) -> dict[str, Any]:
+    from .. import admin
+
+    items = admin.changes(limit)
+    return {"count": len(items), "changes": items}
+
+
+@app.post("/api/admin/replay")
+def admin_replay(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """The same batch under different rules, without saving them.
+
+    Synchronous, unlike /api/run-batch. It walks two arcs against a scratch
+    database, which is tens of seconds rather than the minutes a live arc takes,
+    because the frozen diagnoses spend no LLM quota. Backgrounding it would mean
+    a second job to poll for a result that is only useful immediately.
+    """
+    from .. import whatif
+    from ..brain.validation import RuleInvalid
+
+    try:
+        overrides = whatif.parse_overrides(body)
+    except RuleInvalid as exc:
+        raise HTTPException(status_code=422,
+                            detail={"problems": exc.problems}) from exc
+    if overrides.empty:
+        raise HTTPException(
+            status_code=400,
+            detail="No overrides given — there is nothing to compare against.")
+
+    if not _begin("replaying the batch"):
+        raise HTTPException(status_code=409,
+                            detail=f"Already busy: {_seed_state['stage']}.")
+    try:
+        return whatif.replay(overrides).as_dict()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        _end()
+
+
+@app.get("/api/promises")
+def promises_list() -> dict[str, Any]:
+    """The promise book. Open promises are the agent deliberately silent, which
+    is the one thing a dashboard cannot show as activity and most needs to."""
+    from ..promises import counts
+
+    with SessionLocal() as session:
+        rows = (session.query(PromiseRow)
+                .order_by(desc(PromiseRow.id)).limit(300).all())
+        items = [{
+            "record_id": r.record_id,
+            "promised_at": r.promised_at.isoformat() if r.promised_at else None,
+            "promised_for": r.promised_for.isoformat() if r.promised_for else None,
+            "amount_paise": r.amount,
+            "amount_display": format_inr(r.amount),
+            "state": r.state,
+            "confidence": r.confidence,
+            "reply_text": r.reply_text,
+            "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
+        } for r in rows]
+    return {"counts": counts(), "promises": items}
+
+
+@app.get("/api/replies")
+def replies_log(limit: int = Query(default=200, le=1000)) -> dict[str, Any]:
+    """Every reply the agent read, with the label it produced and what that
+    label did. The conversation layer's audit trail."""
+    from ..enums import Stage
+
+    with SessionLocal() as session:
+        rows = (session.query(AuditLogRow)
+                .filter(AuditLogRow.stage == Stage.REPLY.value)
+                .order_by(desc(AuditLogRow.id)).limit(limit).all())
+        items = [{
+            "record_id": r.record_id,
+            "outcome": r.outcome,
+            "reason": r.reason,
+            "reply_text": (r.payload or {}).get("reply_text"),
+            "intent": (r.payload or {}).get("intent"),
+            "confidence": (r.payload or {}).get("confidence"),
+            "quote": (r.payload or {}).get("quote"),
+            "promised_date": (r.payload or {}).get("promised_date"),
+            "source": (r.payload or {}).get("source"),
+            "at": r.at.isoformat() if r.at else None,
+        } for r in rows]
+    counts: dict[str, int] = {}
+    for item in items:
+        key = item["intent"] or "UNREAD"
+        counts[key] = counts.get(key, 0) + 1
+    return {"count": len(items), "by_intent": counts, "replies": items}
 
 
 # --- the dashboard ------------------------------------------------------------

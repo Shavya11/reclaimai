@@ -39,6 +39,7 @@ from .db import (
     ExecutedActionRow,
     HumanQueueRow,
     InterventionRow,
+    PromiseRow,
     SessionLocal,
     WebhookEventRow,
     init_db,
@@ -62,6 +63,10 @@ TABLES = (
     WebhookEventRow,
     AuditLogRow,
     HumanQueueRow,
+    # V2. Without it a restored deployment shows an empty promise book beside a
+    # scoreboard that counts nine promises — the dashboard's most distinctive
+    # screen, blank, next to numbers that say it should not be.
+    PromiseRow,
     AppStateRow,
 )
 
@@ -99,14 +104,19 @@ def _load_row(model, data: dict[str, Any], stamps: set[str],
     return model(**kwargs)
 
 
-def build(*, llm=None, seed: int | None = None, extra_ticks: int = 3,
-          path: Path | None = None) -> dict[str, Any]:
+def build(*, llm=None, extractor=None, seed: int | None = None,
+          extra_ticks: int = 3, path: Path | None = None) -> dict[str, Any]:
     """Reset, walk the entire demo arc, and freeze the result.
 
     Run with layer 2 on. The whole point of the snapshot is that a deployment
     which cannot reach a model still shows the diagnoses a model produced, and
     a snapshot built with `--no-llm` publishes the fallback numbers under the
     headline ones — the exact mismatch this file exists to prevent.
+
+    The reply extractor is passed for the same reason. Without it every reply
+    lands below the confidence floor, no promise is ever made, and the restored
+    deployment shows an empty promise book beside a scoreboard that says there
+    should be nine.
     """
     from . import clock
     from .runner import DEMO_ARC, run_batch, tick
@@ -118,9 +128,9 @@ def build(*, llm=None, seed: int | None = None, extra_ticks: int = 3,
     reset_database()
     clock.reset()
 
-    run_batch(seed=seed, llm=llm, dry_run=True)
+    run_batch(seed=seed, llm=llm, extractor=extractor, dry_run=True)
     for step in DEMO_ARC + ["+7d"] * max(0, extra_ticks):
-        tick(advance=step, seed=seed, llm=llm, dry_run=True)
+        tick(advance=step, seed=seed, llm=llm, extractor=extractor, dry_run=True)
 
     board = compute()
     payload: dict[str, Any] = {

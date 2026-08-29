@@ -6,7 +6,7 @@ reads as fabricated, however good the code is.
 """
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 
 from ..enums import LeakType, RecordState, RootCause
@@ -83,6 +83,36 @@ DND_RATE = 0.15
 # established merchant have paid it before.
 PRIOR_SUCCESS_RATE = 0.45
 
+# V2 receivables. Deliberately a SEPARATE stream (see generate): appending to
+# the payments RNG would shift every draw above it and silently invalidate every
+# number V1 published.
+N_INVOICES = 60
+INVOICE_MIX: dict[RootCause, int] = {
+    RootCause.PAYMENT_STALLED: 20,
+    RootCause.AWAITING_APPROVAL: 13,
+    RootCause.BUYER_CASH_CRUNCH: 11,
+    RootCause.INVOICE_NOT_RECEIVED: 10,
+    RootCause.INVOICE_DISPUTED: 6,
+}
+N_BUYERS = 22
+
+# B2B tickets are an order of magnitude above consumer ones, which is the point:
+# it makes the value ceiling fire hard and gives DSO something to move.
+_INVOICE_TICKETS = [25_000, 48_000, 75_000, 120_000, 185_000, 320_000,
+                    560_000, 890_000, 1_200_000]
+_INVOICE_WEIGHTS = [16, 15, 14, 12, 10, 8, 6, 4, 2]
+
+BUYER_ORGS = [
+    "Sundaram Textiles", "Kaveri Logistics", "Nandi Steelworks",
+    "Meridian Foods", "Anand Auto Components", "Prakash Chemicals",
+    "Vertex Interiors", "Coastal Marine Supply", "Deccan Packaging",
+    "Orion Electricals", "Bharat Agro Traders", "Silverline Pharma",
+    "Trident Engineering", "Gokul Dairy Products", "Ashwin Printing",
+    "Ravi Constructions", "Lotus Hospitality", "Zenith Instruments",
+    "Kamal Garments", "Surya Solar Systems", "Indus Paper Mills",
+    "Neelkanth Ceramics",
+]
+
 OUTAGE_ISSUER = "HDFC"
 OUTAGE_COUNT = 15  # clustered inside one hour -> makes the cohort signal real
 HIGH_VALUE_COUNT = 7  # above the ₹50,000 ceiling, so guardrail #8 fires
@@ -118,6 +148,10 @@ class Batch:
     # outside the cluster can draw the outage issuer by chance, and a test that
     # guesses breaks the moment the RNG shifts under it.
     outage_ids: frozenset[str] = frozenset()
+    # The buyer reply text, per record, for the records that answered at all.
+    # Held on the batch rather than on the record because a reply is something
+    # that arrives later — settlement delivers it, the record does not own it.
+    replies: dict[str, str] = field(default_factory=dict)
 
     @property
     def total_at_risk(self) -> int:
@@ -161,7 +195,148 @@ def _amount(rng: random.Random, high_value: bool) -> int:
     return max(199, int(round(base * rng.uniform(0.9, 1.25)))) * 100
 
 
-def generate(seed: int = 42, n: int = 120, at=None) -> Batch:
+def _make_buyers(rng: random.Random, epoch) -> list[Customer]:
+    """B2B counterparties. Same Customer shape as a consumer — AtRiskRecord and
+    the guardrails stay generic, which is the whole reason a new leak type is a
+    detector and a policy block rather than a schema migration.
+
+    `successful_payments_lifetime` carries prior invoices paid, so the frequency
+    cap, consent and DND guardrails treat an AP contact exactly as they treat a
+    consumer. A finance team can opt out of dunning email too.
+    """
+    out = []
+    for i, org in enumerate(BUYER_ORGS[:N_BUYERS]):
+        slug = org.split()[0].lower()
+        paid = rng.randint(0, 40)
+        out.append(Customer(
+            id=f"BUYER_{9000 + i}",
+            email=f"accounts@{slug}.example.com",
+            phone=f"+9180{rng.randint(10000000, 99999999)}",
+            opted_out=False,
+            on_dnd=False,
+            successful_payments_lifetime=paid,
+            last_successful_at=(epoch - timedelta(days=rng.randint(10, 120))
+                                if paid else None),
+        ))
+    return out
+
+
+def _invoice_amount(rng: random.Random) -> int:
+    base = rng.choices(_INVOICE_TICKETS, weights=_INVOICE_WEIGHTS, k=1)[0]
+    return int(round(base * rng.uniform(0.85, 1.3))) * 100
+
+
+# How overdue an invoice is, given its cause. These are not decoration: the
+# receivables prompt asks the model to judge lateness against the buyer's own
+# average, so the gap between days_overdue and avg_days_to_pay has to carry the
+# signal. An AWAITING_APPROVAL invoice is barely late for a slow payer; a
+# PAYMENT_STALLED one is late by anyone's standard.
+_OVERDUE_RANGE: dict[RootCause, tuple[int, int]] = {
+    RootCause.INVOICE_NOT_RECEIVED: (5, 20),
+    RootCause.AWAITING_APPROVAL: (3, 18),
+    RootCause.BUYER_CASH_CRUNCH: (25, 70),
+    RootCause.PAYMENT_STALLED: (20, 65),
+    RootCause.INVOICE_DISPUTED: (15, 55),
+}
+
+_PAY_TERMS = (15, 30, 45, 60)
+
+
+def _make_invoices(rng: random.Random, epoch, n: int, buyers: list[Customer]):
+    """~n overdue invoices, drawn from their OWN rng.
+
+    Every signal here is one the receivables prompt names. Nothing is present
+    that the model is not asked to weigh, and nothing it is asked to weigh is
+    absent — V1's hardest-won lesson was that a fixture which labels a record
+    INSUFFICIENT_FUNDS while giving it no history makes UNKNOWN the only honest
+    answer, and scores the model 0% for being right.
+    """
+    causes: list[RootCause] = []
+    for cause, count in INVOICE_MIX.items():
+        causes.extend([cause] * count)
+    causes = causes[:n]
+    while len(causes) < n:
+        causes.append(RootCause.PAYMENT_STALLED)
+    rng.shuffle(causes)
+
+    records: list[AtRiskRecord] = []
+    truth: dict[str, RootCause] = {}
+
+    for i, cause in enumerate(causes):
+        rid = f"INV_{7000 + i}"
+        buyer = buyers[rng.randrange(len(buyers))]
+        amount = _invoice_amount(rng)
+        terms = rng.choice(_PAY_TERMS)
+
+        lo, hi = _OVERDUE_RANGE[cause]
+        days_overdue = rng.randint(lo, hi)
+        due = epoch - timedelta(days=days_overdue)
+        issued = due - timedelta(days=terms)
+
+        # A buyer's own habit is the yardstick the prompt judges against.
+        if cause is RootCause.AWAITING_APPROVAL:
+            avg_days = terms + rng.randint(days_overdue + 2, days_overdue + 25)
+        elif cause is RootCause.BUYER_CASH_CRUNCH:
+            avg_days = terms + rng.randint(0, 6)
+        else:
+            avg_days = terms + rng.randint(0, 12)
+
+        # Signals that distinguish the five causes. Each cause gets exactly the
+        # tells the prompt says to read, and no others.
+        partial = 0
+        dispute = False
+        reminders = rng.randint(1, 3)
+        po_present = True
+
+        if cause is RootCause.INVOICE_NOT_RECEIVED:
+            reminders = 0
+            po_present = rng.random() < 0.4
+        elif cause is RootCause.INVOICE_DISPUTED:
+            dispute = True
+            po_present = rng.random() < 0.5
+        elif cause is RootCause.BUYER_CASH_CRUNCH:
+            # Paying part of a bill is the strongest single tell there is: it is
+            # neither a dispute nor a lost document.
+            partial = int(amount * rng.uniform(0.15, 0.45)) // 100 * 100
+            reminders = rng.randint(2, 4)
+        elif cause is RootCause.AWAITING_APPROVAL:
+            reminders = rng.randint(0, 2)
+
+        signals: dict = {
+            "invoice_id": f"inv_{rng.getrandbits(40):010x}",
+            "issued_at": issued.isoformat(),
+            "days_overdue": days_overdue,
+            "payment_terms_days": terms,
+            "buyer_org": BUYER_ORGS[int(buyer.id.removeprefix("BUYER_")) - 9000],
+            "ap_contact": buyer.email,
+            "prior_invoices_paid": buyer.successful_payments_lifetime,
+            "avg_days_to_pay": avg_days,
+            "partial_paid_paise": partial,
+            "reminders_sent": reminders,
+            "dispute_flag": dispute,
+            "po_number_present": po_present,
+            "buyer_reply": None,   # arrives later, through settlement
+        }
+
+        records.append(AtRiskRecord(
+            id=rid,
+            leak_type=LeakType.OVERDUE_INVOICE,
+            amount=amount,
+            counterparty_id=buyer.id,
+            source_ref=signals["invoice_id"],
+            detected_at=due,      # the clock starts when it fell due
+            due_at=due,
+            raw_signals=signals,
+            state=RecordState.AT_RISK,
+        ))
+        truth[rid] = cause
+
+    return records, truth
+
+
+def generate(seed: int = 42, n: int = 120, at=None,
+             leak_types: "set[LeakType] | None" = None,
+             n_invoices: int = N_INVOICES) -> Batch:
     epoch = batch_epoch(at)
     rng = random.Random(seed)
     customers = _make_customers(rng, epoch)
@@ -256,9 +431,53 @@ def generate(seed: int = 42, n: int = 120, at=None) -> Batch:
         truth[rid] = cause
 
     _assign_contact_flags(customers, records, truth, rng)
+
+    # --- V2: receivables, on their own stream ------------------------------
+    #
+    # Everything above this line is byte-for-byte what V1 produced, and it has
+    # to stay that way: PROJECT.md, the README and `cli verify` all quote
+    # numbers derived from it. Drawing invoices from `rng` would advance the
+    # shared stream and change all 120 payment records — a change that is
+    # invisible in a diff and fatal to every published figure. A second stream
+    # seeded off the first keeps the batch reproducible AND additive.
+    if n_invoices:
+        inv_rng = random.Random(seed + 1)
+        buyers = _make_buyers(inv_rng, epoch)
+        inv_records, inv_truth = _make_invoices(inv_rng, epoch, n_invoices, buyers)
+        _assign_buyer_flags(buyers, inv_records, inv_rng)
+        records.extend(inv_records)
+        customers.extend(buyers)
+        truth.update(inv_truth)
+
+    # Filtering happens last, after every draw is made, so that asking for a
+    # subset returns exactly the records the full batch would have contained.
+    # Filtering earlier would make the RNG depend on the filter and give
+    # `--leak-types` a different batch rather than a smaller one.
+    if leak_types is not None:
+        keep = {r.id for r in records if r.leak_type in leak_types}
+        records = [r for r in records if r.id in keep]
+        truth = {k: v for k, v in truth.items() if k in keep}
+        outage_ids = {i for i in outage_ids if i in keep}
+        owners = {r.counterparty_id for r in records}
+        customers = [c for c in customers if c.id in owners]
+
     return Batch(records=records, customers=customers, truth=truth,
                  traffic=_traffic(records, truth),
                  outage_ids=frozenset(outage_ids))
+
+
+def _assign_buyer_flags(buyers, records, rng) -> None:
+    """A finance team can opt out of dunning email and can sit on a DND list
+    exactly as a consumer can, and the guardrails must be able to prove it. Two
+    of each, guaranteed rather than hoped for — the same reasoning as
+    _assign_contact_flags."""
+    owners = sorted({r.counterparty_id for r in records})
+    rng.shuffle(owners)
+    by_id = {b.id: b for b in buyers}
+    for bid in owners[:2]:
+        by_id[bid].opted_out = True
+    for bid in owners[2:5]:
+        by_id[bid].on_dnd = True
 
 
 # Causes whose policy row contacts the customer. Only these can ever trip the
@@ -308,6 +527,11 @@ def _traffic(records, truth) -> dict[str, int]:
     failures: dict[str, int] = {}
     outage_buckets: set[str] = set()
     for r in records:
+        # An invoice has no issuer. Bucketing it under a placeholder would put
+        # sixty records into one fake cohort and could manufacture an outage
+        # signal out of accounts-receivable data.
+        if not r.raw_signals.get("issuer_bank"):
+            continue
         key = bucket_key(r.raw_signals["issuer_bank"], r.detected_at)
         failures[key] = failures.get(key, 0) + 1
         if (truth[r.id] is RootCause.BANK_DOWNTIME
