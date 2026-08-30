@@ -403,17 +403,15 @@ intervals, and the harness refuses to print a comparison it cannot stand behind.
 
 ### The result, and the honest caveat
 
-On the 69 records layer 2 answers: **+₹12,74,886 recovered, 51 fewer human
-escalations, 0 harmful actions**, every interval excluding zero, for **38 API
-calls** — the signature cache turns 412 consultations into 38 requests. With the
-model off, all 69 become `UNKNOWN` → `no_auto_action` → a person, which is not a
-queue, it is a backlog nobody works.
+On the 69 records layer 2 answers, as first measured: **+₹12,74,886 recovered,
+51 fewer human escalations, 0 harmful actions**, for **38 API calls** — the
+signature cache turns 412 consultations into 38 requests.
 
-**The money delta is an upper bound and the file says so.** The outcome simulator
-only recovers a record when an intervention fires, so the "off" arm scores ₹0 by
-construction rather than by measurement. Real customers sometimes pay unprompted;
-`recoup` has a self-cure baseline (organic 46 vs 45 across arms) and we do not.
-The escalation delta does not have this problem — those rows are counted.
+**The money figure was an upper bound, and Day 6b closed the gap rather than
+leaving it disclosed.** The simulator only recovered a record when an
+intervention fired, so the "off" arm scored ₹0 by construction. See Day 6b for
+what the number became once customers could pay unprompted: **+₹5,92,424**, less
+than half. The escalation delta did not move, because those rows are counted.
 
 **The run is reproducible only up to the model's own variance**, which is also
 recorded rather than smoothed over. The seed fixes the batch, the rules and the
@@ -426,6 +424,58 @@ exists to stop us making.
 The one thing worth stating plainly: we built the measurement before running it
 and would have published a null result. That is the whole point of having built
 it.
+
+
+---
+
+## Day 6b — the self-cure baseline
+
+The limitation Day 6 published turned out to be worth closing rather than
+disclosing. The simulator only recovered a record when an intervention fired, so
+it asserted that nobody ever pays unless chased — which flatters any agent that
+chases, and made the ablation's money figure an upper bound by about 2×.
+
+- [x] **6b.1 Self-cure drawn per record** — `SELF_CURE` per cause in
+      `outcomes.py`, dated within 30 days of detection, from `Random(seed + 2)`
+      after every other draw and stored on the batch rather than on a record.
+      The reproducibility digest and ₹1,12,09,814 are untouched, checked by
+      computing the digest with and without the change rather than assuming.
+- [x] **6b.2 Organic recoveries delivered through the real webhook path** —
+      signed, verified, and landing as `ORGANIC`: the money arrived and none of
+      it is the agent's. Its own scoreboard bucket, so it neither inflates
+      recovery nor gets written off as money that never came back.
+- [x] **6b.3 The bug this exposed, which is the important part.** Our executor
+      writes `notes.record_id` on everything it mints, so that note is proof the
+      money came through us. The first version forged it on organic payments —
+      and attribution duly adopted them, crediting the agent with 23 recoveries
+      it had not caused. An unprompted payment now arrives against the
+      MERCHANT's original order reference and carries no note of ours, so
+      nothing can claim it. ₹4L moved from "ours" to "theirs" on that one fix.
+- [x] **6b.4 A second ordering bug, found by 6.1's verify check.** Settlement
+      runs before replies are read, so a reply can arrive after its record was
+      already paid — and both queue writers added the row before checking
+      whether the record was terminal, putting a settled record back on
+      somebody's desk. Guarded in `runner._queue_for_human` and
+      `conversation.handler._to_human`.
+- [x] **6b.5 Incremental figures for both strategies** — a record recovered on
+      day one from a customer who would have paid on day twenty is money that
+      was always going to arrive. Netting it out is what the comparison is
+      actually asking.
+- [x] **6b.6 `verify` check for arm parity** — the draw is identical in every
+      arm and no cause rated zero ever self-cures. The property recoup found the
+      hard way when its control arm stopped being observed sooner and was
+      credited fewer unprompted payments for a bookkeeping reason.
+
+**What it cost us.** The ablation's headline fell from +₹12,74,886 to
+**+₹5,92,424** — layer 2 cannibalises ₹1,51,595 of money that was arriving
+anyway. The naive comparison moved the other way: net of the 21 self-cures the
+naive run banked and claimed against our 10, it is **₹27,50,189 against
+₹19,02,912** rather than ₹47.6L against ₹21.4L, so roughly two thirds of its
+apparent lead is money that was coming regardless.
+
+The self-cure rates are now the least defensible numbers in the project and the
+README says so: the ordering is arguable, the magnitudes are estimates, and
+every figure above moves with them.
 
 ## Non-negotiables (if everything else burns down)
 
