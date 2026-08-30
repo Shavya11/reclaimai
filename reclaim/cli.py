@@ -886,6 +886,63 @@ def _coerce(value: str):
         return text
 
 
+def cmd_evidence(args) -> int:
+    """Run each proof once and commit the result under `evidence/`.
+
+    "Proof on an ephemeral disk has an expiry date; proof in git does not" —
+    PLAN.md, after Day 4, about five webhook deliveries lost with Render's
+    /tmp. The ablation has the same shape: minutes of live model calls, a
+    number worth citing, and nowhere durable to keep it.
+
+    A void or failed run is NOT written. `ablation` refuses to print a
+    comparison when too many model calls went unanswered, and committing that
+    refusal as though it were a measurement would launder the exact number the
+    void condition exists to suppress.
+    """
+    from . import evidence
+
+    seed = args.seed if getattr(args, "seed", None) is not None else settings.seed
+    only = set(args.only.split(",")) if getattr(args, "only", None) else None
+    written, skipped = [], []
+
+    def wanted(name: str) -> bool:
+        return only is None or name in only
+
+    if wanted("verify"):
+        checks = run_all()
+        payload = {"checks": [{"name": c.name, "status": c.status,
+                               "detail": c.detail} for c in checks],
+                   "passed": sum(c.status == PASS for c in checks),
+                   "failed": sum(c.status == FAIL for c in checks),
+                   "pending": sum(c.status == PENDING for c in checks)}
+        written.append(evidence.write("verify", payload, seed=seed))
+
+    if wanted("baseline"):
+        from .baseline import compare
+
+        written.append(evidence.write("baseline", compare(seed=seed).as_dict(),
+                                      seed=seed))
+
+    if wanted("ablation"):
+        from .experiments import ablation
+
+        print(f"  {DIM}running the ablation — real model calls, a few "
+              f"minutes{OFF}")
+        data = ablation.run(seed=seed).as_dict()
+        if data.get("void"):
+            skipped.append(f"ablation: {data.get('reason')}")
+        else:
+            written.append(evidence.write("ablation", data, seed=seed))
+
+    for path in written:
+        print(f"  {GREEN}wrote{OFF} {path.relative_to(evidence.DIR.parent)}")
+    for note in skipped:
+        print(f"  {YELLOW}skipped{OFF} {note}")
+    if not written:
+        print(f"  {DIM}nothing written{OFF}")
+    return 0
+
+
 def cmd_rules(args) -> int:
     """Show the rule table and whether each row is shipped or edited."""
     from . import admin
@@ -1029,11 +1086,16 @@ def main(argv: list[str] | None = None) -> int:
         ("ablation", cmd_ablation, "is layer 2 worth it: the same batch with "
                                    "and without the model"),
         ("rules", cmd_rules, "show the rule table, shipped vs edited"),
+        ("evidence", cmd_evidence, "run each proof once and commit the result"),
         ("promises", cmd_promises, "the promise-to-pay book"),
     ]:
         sp = subs.add_parser(name, help=helptext)
         sp.add_argument("--json", action="store_true", help="machine-readable output")
         sp.set_defaults(func=fn)
+
+    subs.choices["evidence"].add_argument(
+        "--only", default=None,
+        help="comma-separated subset: verify,baseline,ablation")
 
     subs.choices["harvest"].add_argument(
         "--collect", action="store_true",

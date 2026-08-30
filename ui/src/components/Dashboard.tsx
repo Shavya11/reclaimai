@@ -205,6 +205,9 @@ export default function Dashboard({
       {/* --- receivables, when there are any ----------------------------- */}
       {!!board.invoice_records && <Receivables board={board} />}
 
+      {/* --- what a visitor submitted ------------------------------------ */}
+      {!!board.user_records && <Submitted board={board} onDrill={onDrill} />}
+
       {/* --- the money band, tying those four together ------------------- */}
       <div className="md:col-span-12">
         <Card bodyClass="pt-5">
@@ -524,6 +527,59 @@ function Row({
 // DSO leads, because it is the number a finance team recognises. A recovery rate
 // is our metric; days sales outstanding is theirs, and the whole argument for
 // chasing receivables well is made in days rather than percentages.
+// Records a visitor typed into the Try-it tab and committed. They ran through
+// the same runner, the same gate and the same executor as everything above, and
+// they are counted here rather than in the four numbers at the top — for the
+// reason organic money is kept out of "Recovered". Those figures are a
+// measurement over the seeded batch, and a stranger's submission was not part of
+// what was measured. Saying so on the card is the honest version of both facts.
+function Submitted({
+  board,
+  onDrill,
+}: {
+  board: Scoreboard;
+  onDrill?: (state: string) => void;
+}) {
+  const n = board.user_records ?? 0;
+  const recovered = board.user_recovered_records ?? 0;
+
+  return (
+    <div className="md:col-span-12">
+      <Card
+        title="Submitted from the dashboard"
+        hint="counted apart from every figure above"
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Stat
+            label="Records you added"
+            value={String(n)}
+            sub={`${board.user_at_risk_display ?? "₹0"} at risk — run through the same runner, gate and executor`}
+            onOpen={onDrill && (() => onDrill("all"))}
+            openLabel="Open every detected record"
+          />
+          <Stat
+            label="Recovered of those"
+            value={board.user_recovered_display ?? "₹0"}
+            tone={recovered ? "green" : "ink"}
+            sub={`${recovered} of ${n} — attributed the same way, by webhook`}
+          />
+          <div className="rounded-md border border-line bg-wash p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-mute">
+              Why these are separate
+            </p>
+            <p className="mt-2 text-[12px] leading-relaxed text-ink">
+              The published figures are a measurement over one seeded batch. A
+              record added after the fact is real, but it was not part of what
+              was measured — so it is counted here and nowhere else.
+            </p>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+
 function Receivables({ board }: { board: Scoreboard }) {
   const improvement = board.dso_improvement ?? 0;
   const promises = board.promises ?? {};

@@ -123,6 +123,92 @@ export type Scoreboard = {
   promises?: Record<string, number>;
   promises_kept_rate?: number;
   replies_read?: number;
+  // Records a visitor submitted through the Try-it tab. Counted apart from
+  // everything above, so the published figures mean what they meant before
+  // anybody typed into the demo. Optional for the same reason the receivables
+  // fields are.
+  user_records?: number;
+  user_at_risk_paise?: number;
+  user_recovered_paise?: number;
+  user_recovered_records?: number;
+  user_at_risk_display?: string;
+  user_recovered_display?: string;
+};
+
+// --- the sandbox --------------------------------------------------------------
+
+export type TraceStage = {
+  stage: string;
+  // Who decided this, and the only reason the strip is worth rendering: the
+  // model badge must appear on at most one card.
+  decided_by: "detector" | "model" | "table" | "gate" | "runner";
+  output: string;
+  detail: string;
+  why: Record<string, unknown>;
+};
+
+export type Trace = {
+  record_id: string;
+  committed: boolean;
+  verdict: string;
+  trace: TraceStage[];
+  batch?: Record<string, unknown>;
+};
+
+export type Preset = {
+  label: string;
+  hint: string;
+  submission: Record<string, unknown>;
+};
+
+export type EvidenceClaim = {
+  name: string;
+  claim: string;
+  detail: string;
+  test: string;
+  command: string;
+  present: boolean;
+  produced_at: string | null;
+  seed: number | null;
+  git_commit: string | null;
+  result: Record<string, unknown> | null;
+};
+
+export type ReplyPreset = { label: string; hint: string; text: string };
+
+export type Scenario = {
+  label: string;
+  hint: string;
+  hypothetical: Record<string, unknown>;
+};
+
+export type RuleVerdict = {
+  guardrail: string;
+  verdict: "PASS" | "BLOCK";
+  reason: string;
+  requires_human: boolean;
+  closes_record: boolean;
+  deferred_until: string | null;
+};
+
+export type GuardrailRun = {
+  allowed: boolean;
+  requires_human: boolean;
+  passed: number;
+  blocked: number;
+  total: number;
+  idempotency_key: string;
+  rules: RuleVerdict[];
+};
+
+export type Submission = {
+  text?: string;
+  error_code?: string;
+  error_reason?: string;
+  amount_paise?: number;
+  leak_type?: string;
+  customer_id?: string;
+  without_model?: boolean;
 };
 
 export type Block = {

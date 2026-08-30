@@ -81,18 +81,25 @@ class SettlementResult:
         }
 
 
-def _pending() -> list[dict[str, Any]]:
+def _pending(only: set[str] | None = None) -> list[dict[str, Any]]:
     """Interventions that fired and have not yet heard back. Reading them out as
-    plain dicts keeps the session short — attribution opens its own."""
+    plain dicts keeps the session short — attribution opens its own.
+
+    `only` narrows this to named records. A visitor's committed submission has to
+    be able to settle without dragging every other pending intervention through
+    with it: settling the seeded batch as a side effect of somebody pressing a
+    demo button would move the published figures, which is the one thing the
+    whole `USR_` split exists to prevent."""
     with SessionLocal() as session:
-        rows = (session.query(InterventionRow, AtRiskRecordRow)
-                .join(AtRiskRecordRow,
-                      AtRiskRecordRow.id == InterventionRow.record_id)
-                .filter(InterventionRow.outcome == "EXECUTED")
-                .filter(InterventionRow.result.is_(None))
-                .filter(InterventionRow.razorpay_ref.isnot(None))
-                .order_by(InterventionRow.id)
-                .all())
+        query = (session.query(InterventionRow, AtRiskRecordRow)
+                 .join(AtRiskRecordRow,
+                       AtRiskRecordRow.id == InterventionRow.record_id)
+                 .filter(InterventionRow.outcome == "EXECUTED")
+                 .filter(InterventionRow.result.is_(None))
+                 .filter(InterventionRow.razorpay_ref.isnot(None)))
+        if only is not None:
+            query = query.filter(InterventionRow.record_id.in_(only))
+        rows = query.order_by(InterventionRow.id).all()
         return [{
             "id": i.id, "record_id": i.record_id, "action_type": i.action_type,
             "attempt_number": i.attempt_number, "razorpay_ref": i.razorpay_ref,
@@ -115,6 +122,7 @@ def settle(
     seed: int = 42,
     secret: str | None = None,
     self_cure: dict[str, Any] | None = None,
+    only: set[str] | None = None,
 ) -> SettlementResult:
     """Decide each pending intervention's fate and deliver the corresponding
     webhook. Safe to run repeatedly: settled interventions are skipped, and a
@@ -127,7 +135,7 @@ def settle(
 
     promised = set(open_promises())
 
-    for item in _pending():
+    for item in _pending(only):
         result.pending += 1
         rid = item["record_id"]
         cause = truth.get(rid, RootCause.UNKNOWN)

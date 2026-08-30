@@ -94,6 +94,134 @@ def _every_leak_type_has_a_detector() -> Check:
                  f"leak types")
 
 
+def _sandbox_preview_leaves_no_trace() -> Check:
+    """The claim the Try-it tab rests on, checked rather than asserted.
+
+    A preview runs the real diagnosers, the real policy table and the real gate.
+    The only thing separating it from a batch is that it stops before executing,
+    and that is a property of one function rather than a wall — so it is checked
+    here the way the what-if replay is, by counting rows and the demo clock on
+    both sides of a real one.
+
+    Unlike the replay check, this one needs no scratch database, and that is the
+    point: a preview writes nothing, so running it against the live database is
+    safe. If that ever stops being true this check fails, which is exactly when
+    somebody needs to hear about it.
+    """
+    name = "sandbox preview leaves no trace"
+    from . import clock, sandbox
+    from .db import (
+        AtRiskRecordRow, AuditLogRow, ExecutedActionRow, InterventionRow,
+        PromiseRow, SessionLocal,
+    )
+
+    tables = (AtRiskRecordRow, AuditLogRow, ExecutedActionRow, InterventionRow,
+              PromiseRow)
+
+    def snapshot():
+        with SessionLocal() as session:
+            return tuple(session.query(t).count() for t in tables)
+
+    try:
+        before, before_clock = snapshot(), clock.offset().total_seconds()
+        for preset in sandbox.PRESETS:
+            sandbox.preview(sandbox.Submission(**preset["submission"]))
+        after, after_clock = snapshot(), clock.offset().total_seconds()
+    except Exception as exc:  # noqa: BLE001
+        return Check(name, FAIL, f"preview raised: {exc!r}")
+
+    if before != after:
+        moved = [t.__tablename__ for t, a, b in zip(tables, before, after)
+                 if a != b]
+        return Check(name, FAIL, f"preview wrote to {', '.join(moved)}")
+    if before_clock != after_clock:
+        return Check(name, FAIL, "preview moved the demo clock")
+    return Check(name, PASS,
+                 f"{len(sandbox.PRESETS)} previews wrote no row and moved no clock")
+
+
+def _user_records_do_not_move_the_published_figures() -> Check:
+    """A stranger can type into the demo. Nothing they type may move a number.
+
+    The dashboard commits a visitor's submission as a real record — same runner,
+    same gate, same executor. That is the feature. The hazard is that the
+    scoreboard is the one published figure computed by asking the live database
+    what is in it, so an extra row lands straight in the headline.
+
+    The reproducibility digest is NOT at risk and this check does not pretend
+    otherwise: `generate` is a pure function of its seed and cannot see a
+    database. The ablation seeds scratch databases the same way, and the baseline
+    only ever looks live rows up by an id drawn from the seeded batch, so an
+    unknown id contributes zero. This is the one place that needed a filter, and
+    it is the one place checked.
+
+    Run against a scratch database so the check itself cannot do the thing it
+    exists to forbid.
+    """
+    import os
+    import tempfile
+    import uuid
+    from datetime import timedelta
+
+    name = "visitor records stay out of the published figures"
+
+    from . import clock
+    from . import db as dbmod
+    from .db import AtRiskRecordRow, init_db, use_database
+    from .enums import LeakType, RecordState
+    from .provenance import USER_PREFIX, mark
+    from .scoreboard import compute
+
+    def row(rid: str, amount: int, *, user: bool):
+        return AtRiskRecordRow(
+            id=rid, leak_type=LeakType.FAILED_PAYMENT.value, amount=amount,
+            currency="INR", counterparty_id="CUST_4000", source_ref=f"pay_{rid}",
+            detected_at=clock.now() - timedelta(days=1), due_at=None,
+            raw_signals=mark({}) if user else {},
+            state=RecordState.AT_RISK.value, attempts=0, next_action_at=None)
+
+    path = os.path.join(tempfile.gettempdir(),
+                        f"reclaim_provenance_{uuid.uuid4().hex}.db")
+    try:
+        with use_database(f"sqlite:///{path}"):
+            init_db()
+            # `SessionLocal` is a module global that `use_database` rebinds, so
+            # it has to be read through the module INSIDE the block. Binding the
+            # name on the way in gets the live database and quietly writes to it.
+            with dbmod.SessionLocal() as session:
+                session.add_all([row("REC_5000", 250_000, user=False),
+                                 row("REC_5001", 125_000, user=False)])
+                session.commit()
+            before = compute().as_dict()
+
+            with dbmod.SessionLocal() as session:
+                session.add(row(f"{USER_PREFIX}9000", 9_900_000, user=True))
+                session.commit()
+            after = compute().as_dict()
+
+        moved = [k for k, v in before.items()
+                 if not k.startswith("user_") and after.get(k) != v]
+        if moved:
+            return Check(name, FAIL,
+                         f"a visitor record moved {', '.join(sorted(moved))}")
+        if after.get("user_records") != 1:
+            return Check(name, FAIL,
+                         f"visitor bucket counted {after.get('user_records')}, "
+                         f"expected 1")
+        if after.get("user_at_risk_paise") != 9_900_000:
+            return Check(name, FAIL, "visitor amount did not reach its own bucket")
+        return Check(name, PASS,
+                     "a ₹99,000 visitor record moved no published figure and "
+                     "landed in its own bucket")
+    except Exception as exc:  # noqa: BLE001
+        return Check(name, FAIL, repr(exc))
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def _replay_is_side_effect_free() -> Check:
     """The load-bearing claim of the rules studio, checked rather than asserted.
 
@@ -662,6 +790,8 @@ CHECKS = [
     _no_settled_record_still_sits_in_the_queue,
     _self_cure_is_identical_across_strategies,
     _replay_is_side_effect_free,
+    _user_records_do_not_move_the_published_figures,
+    _sandbox_preview_leaves_no_trace,
     _dashboard_is_built,
 ]
 

@@ -42,6 +42,31 @@ def save_batch(records, customers) -> int:
         return len(records)
 
 
+def save_records(records) -> int:
+    """Add records without clearing what is already stored.
+
+    `save_batch` truncates, because a batch IS the population. A visitor's
+    submission is an addition to it, so it needs the insert without the delete —
+    and it must not silently overwrite an id, since `audit_log` is append-only
+    and a reused id would attach a new submission to an older record's history.
+    """
+    with SessionLocal() as s:
+        added = 0
+        for r in records:
+            if s.get(AtRiskRecordRow, r.id) is not None:
+                raise ValueError(f"record {r.id} already exists")
+            s.add(AtRiskRecordRow(
+                id=r.id, leak_type=r.leak_type.value, amount=r.amount,
+                currency=r.currency, counterparty_id=r.counterparty_id,
+                source_ref=r.source_ref, detected_at=r.detected_at, due_at=r.due_at,
+                raw_signals=r.raw_signals, state=r.state.value, attempts=r.attempts,
+                next_action_at=r.next_action_at,
+            ))
+            added += 1
+        s.commit()
+        return added
+
+
 def load_records(leak_type: LeakType | None = None,
                  state: RecordState | None = RecordState.AT_RISK) -> list[AtRiskRecord]:
     stmt = select(AtRiskRecordRow)

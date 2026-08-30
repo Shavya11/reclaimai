@@ -104,6 +104,7 @@ def run_batch(
     client=None,
     extractor=None,
     leak_types=None,
+    only: set[str] | None = None,
 ) -> BatchResult:
     init_db()
     frm = frm or now()
@@ -122,6 +123,16 @@ def run_batch(
         # refusal over and over and buries the ones that happened once.
         stored = load_records(state=None)
         records = [r for r in stored if r.state in _AGENT_OWNED] or batch.records
+
+    # `only` runs the real batch over one record. It exists so a visitor's
+    # submission enters through this function rather than a private copy of it,
+    # inheriting the gate, the idempotency key and the audit rows. The fallback
+    # to `batch.records` above is deliberately NOT applied here: an empty result
+    # means the named record is not the agent's to work, and quietly running the
+    # whole seeded batch instead would be a demo button that re-proposes 180
+    # records.
+    if only is not None:
+        records = [r for r in records if r.id in only]
 
     # Promises are resolved before anything is proposed. A promise that fell due
     # this morning has to be awake by the time the ladder looks at it, or the

@@ -1,0 +1,369 @@
+{
+  "name": "baseline",
+  "claim": "The machinery beats retrying everything three times.",
+  "detail": "The naive strategy on the identical batch, drawing its coin flips from the same seeded stream keyed on (record, attempt). Nothing separates the two runs except what each chose to do, when, and to whom.",
+  "test": "tests/test_scoreboard.py",
+  "command": "reclaim baseline --json",
+  "produced_at": "2026-08-30T11:38:53.895782+00:00",
+  "seed": 42,
+  "git_commit": "bad1a38",
+  "result": {
+    "baseline": {
+      "label": "Naive baseline",
+      "records": 180,
+      "at_risk_paise": 1120981400,
+      "recovered_paise": 475823400,
+      "organic_paise": 116108700,
+      "organic_records": 13,
+      "organic_display": "\u20b911,61,087",
+      "at_risk_display": "\u20b91,12,09,814",
+      "recovered_display": "\u20b947,58,234",
+      "records_recovered": 81,
+      "recovery_rate": 0.4245,
+      "record_recovery_rate": 0.45,
+      "contacts": 418,
+      "contacts_per_recovery": 5.16,
+      "contacts_to_opted_out": 44,
+      "contacts_to_dnd": 66,
+      "contacts_in_quiet_hours": 330,
+      "customers_over_frequency_cap": 289,
+      "retries_against_never_retry": 30,
+      "compliance_breaches": 729,
+      "by_root_cause": {
+        "INSUFFICIENT_FUNDS": {
+          "records": 33,
+          "recovered": 13,
+          "contacts": 83
+        },
+        "BANK_DOWNTIME": {
+          "records": 24,
+          "recovered": 21,
+          "contacts": 32
+        },
+        "EXPIRED_INSTRUMENT": {
+          "records": 17,
+          "recovered": 5,
+          "contacts": 43
+        },
+        "AUTH_DROPOFF": {
+          "records": 18,
+          "recovered": 6,
+          "contacts": 45
+        },
+        "CART_ABANDONMENT": {
+          "records": 18,
+          "recovered": 6,
+          "contacts": 45
+        },
+        "MANDATE_REVOKED": {
+          "records": 3,
+          "recovered": 0,
+          "contacts": 9
+        },
+        "POLICY_BLOCK": {
+          "records": 4,
+          "recovered": 0,
+          "contacts": 12
+        },
+        "RISK_DECLINE": {
+          "records": 3,
+          "recovered": 0,
+          "contacts": 9
+        },
+        "PAYMENT_STALLED": {
+          "records": 20,
+          "recovered": 12,
+          "contacts": 48
+        },
+        "INVOICE_DISPUTED": {
+          "records": 6,
+          "recovered": 0,
+          "contacts": 18
+        },
+        "BUYER_CASH_CRUNCH": {
+          "records": 11,
+          "recovered": 4,
+          "contacts": 28
+        },
+        "INVOICE_NOT_RECEIVED": {
+          "records": 10,
+          "recovered": 8,
+          "contacts": 17
+        },
+        "AWAITING_APPROVAL": {
+          "records": 13,
+          "recovered": 6,
+          "contacts": 29
+        }
+      }
+    },
+    "ours": {
+      "label": "ReclaimAI",
+      "records": 180,
+      "at_risk_paise": 1120981400,
+      "recovered_paise": 221708800,
+      "open_paise": 496645900,
+      "unrecoverable_paise": 143551900,
+      "at_risk_display": "\u20b91,12,09,814",
+      "recovered_display": "\u20b922,17,088",
+      "open_display": "\u20b949,66,459",
+      "unrecoverable_display": "\u20b914,35,519",
+      "at_risk_short": "\u20b91.12Cr",
+      "recovered_short": "\u20b922.17L",
+      "records_recovered": 61,
+      "records_open": 38,
+      "records_unrecoverable": 62,
+      "recovery_rate": 0.1978,
+      "record_recovery_rate": 0.3389,
+      "by_root_cause": [
+        {
+          "root_cause": "AWAITING_APPROVAL",
+          "records": 34,
+          "recovered_records": 10,
+          "at_risk_paise": 728688600,
+          "recovered_paise": 150538800,
+          "contacts": 27,
+          "rate": 0.2941,
+          "value_rate": 0.2066
+        },
+        {
+          "root_cause": "BUYER_CASH_CRUNCH",
+          "records": 11,
+          "recovered_records": 2,
+          "at_risk_paise": 118419700,
+          "recovered_paise": 30990900,
+          "contacts": 9,
+          "rate": 0.1818,
+          "value_rate": 0.2617
+        },
+        {
+          "root_cause": "INVOICE_NOT_RECEIVED",
+          "records": 8,
+          "recovered_records": 6,
+          "at_risk_paise": 39635100,
+          "recovered_paise": 27661900,
+          "contacts": 11,
+          "rate": 0.75,
+          "value_rate": 0.6979
+        },
+        {
+          "root_cause": "BANK_DOWNTIME",
+          "records": 22,
+          "recovered_records": 18,
+          "at_risk_paise": 25577300,
+          "recovered_paise": 5070700,
+          "contacts": 0,
+          "rate": 0.8182,
+          "value_rate": 0.1983
+        },
+        {
+          "root_cause": "INSUFFICIENT_FUNDS",
+          "records": 35,
+          "recovered_records": 12,
+          "at_risk_paise": 12780900,
+          "recovered_paise": 3412600,
+          "contacts": 33,
+          "rate": 0.3429,
+          "value_rate": 0.267
+        },
+        {
+          "root_cause": "AUTH_DROPOFF",
+          "records": 18,
+          "recovered_records": 5,
+          "at_risk_paise": 8090600,
+          "recovered_paise": 3003900,
+          "contacts": 24,
+          "rate": 0.2778,
+          "value_rate": 0.3713
+        },
+        {
+          "root_cause": "CART_ABANDONMENT",
+          "records": 18,
+          "recovered_records": 4,
+          "at_risk_paise": 14827600,
+          "recovered_paise": 664700,
+          "contacts": 24,
+          "rate": 0.2222,
+          "value_rate": 0.0448
+        },
+        {
+          "root_cause": "EXPIRED_INSTRUMENT",
+          "records": 17,
+          "recovered_records": 4,
+          "at_risk_paise": 17489700,
+          "recovered_paise": 365300,
+          "contacts": 26,
+          "rate": 0.2353,
+          "value_rate": 0.0209
+        },
+        {
+          "root_cause": "INVOICE_DISPUTED",
+          "records": 6,
+          "recovered_records": 0,
+          "at_risk_paise": 143887700,
+          "recovered_paise": 0,
+          "contacts": 0,
+          "rate": 0.0,
+          "value_rate": 0.0
+        },
+        {
+          "root_cause": "PAYMENT_STALLED",
+          "records": 2,
+          "recovered_records": 0,
+          "at_risk_paise": 7925600,
+          "recovered_paise": 0,
+          "contacts": 4,
+          "rate": 0.0,
+          "value_rate": 0.0
+        },
+        {
+          "root_cause": "POLICY_BLOCK",
+          "records": 4,
+          "recovered_records": 0,
+          "at_risk_paise": 3071200,
+          "recovered_paise": 0,
+          "contacts": 0,
+          "rate": 0.0,
+          "value_rate": 0.0
+        },
+        {
+          "root_cause": "MANDATE_REVOKED",
+          "records": 3,
+          "recovered_records": 0,
+          "at_risk_paise": 311400,
+          "recovered_paise": 0,
+          "contacts": 0,
+          "rate": 0.0,
+          "value_rate": 0.0
+        },
+        {
+          "root_cause": "UNKNOWN",
+          "records": 2,
+          "recovered_records": 0,
+          "at_risk_paise": 276000,
+          "recovered_paise": 0,
+          "contacts": 0,
+          "rate": 0.0,
+          "value_rate": 0.0
+        }
+      ],
+      "guardrails_fired": {
+        "cooldown": 268,
+        "frequency_cap": 65,
+        "dnd": 26,
+        "consent": 15,
+        "value_ceiling": 12,
+        "state_validity": 3,
+        "confidence_floor": 2,
+        "freshness": 2,
+        "max_attempts": 1
+      },
+      "guardrails_records": {
+        "confidence_floor": 2,
+        "consent": 15,
+        "cooldown": 66,
+        "dnd": 3,
+        "frequency_cap": 40,
+        "freshness": 2,
+        "max_attempts": 1,
+        "state_validity": 3,
+        "value_ceiling": 12
+      },
+      "guardrails_total": 394,
+      "escalations": 48,
+      "escalations_open": 42,
+      "escalations_resolved": 6,
+      "organic_paise": 259074800,
+      "organic_records": 19,
+      "organic_display": "\u20b925,90,748",
+      "interventions": 181,
+      "contacts": 158,
+      "silent_retries": 23,
+      "contacts_per_recovery": 2.59,
+      "webhooks_attributed": 181,
+      "invoice_records": 60,
+      "invoice_at_risk_paise": 1038483000,
+      "invoice_recovered_paise": 209191600,
+      "invoice_recovered_records": 18,
+      "invoice_at_risk_display": "\u20b91,03,84,830",
+      "invoice_recovered_display": "\u20b920,91,916",
+      "invoice_recovery_rate": 0.2014,
+      "dso_before": 131.5,
+      "dso_after": 121.5,
+      "dso_improvement": 10.0,
+      "promises": {
+        "OPEN": 0,
+        "KEPT": 4,
+        "BROKEN": 4
+      },
+      "promises_kept_rate": 0.5,
+      "replies_read": 25,
+      "user_records": 1,
+      "user_at_risk_paise": 249900,
+      "user_recovered_paise": 0,
+      "user_recovered_records": 0,
+      "user_at_risk_display": "\u20b92,499",
+      "user_recovered_display": "\u20b90",
+      "balances": true
+    },
+    "gap": {
+      "total": {
+        "records": 21,
+        "paise": 151988600,
+        "display": "\u20b915,19,886"
+      },
+      "reasons": [
+        {
+          "reason": "refused_consent_or_dnd",
+          "label": "customer opted out or on DND - contact refused",
+          "records": 11,
+          "paise": 123347800,
+          "display": "\u20b912,33,478"
+        },
+        {
+          "reason": "above_value_ceiling",
+          "label": "above the value ceiling - routed to a human",
+          "records": 4,
+          "paise": 27185700,
+          "display": "\u20b92,71,857"
+        },
+        {
+          "reason": "still_open",
+          "label": "still in flight - deferred, not abandoned",
+          "records": 2,
+          "paise": 1210400,
+          "display": "\u20b912,104"
+        },
+        {
+          "reason": "strategy",
+          "label": "our strategy simply did worse here",
+          "records": 4,
+          "paise": 244700,
+          "display": "\u20b92,447"
+        }
+      ],
+      "deliberate_paise": 150533500,
+      "recoverable_with_layer_2_paise": 0,
+      "still_open_paise": 1210400
+    },
+    "incremental": {
+      "naive_recovered_paise": 475823400,
+      "naive_incremental_paise": 275018900,
+      "naive_incremental_display": "\u20b927,50,189",
+      "naive_self_cures_claimed": 21,
+      "ours_recovered_paise": 221708800,
+      "ours_incremental_paise": 198392800,
+      "ours_incremental_display": "\u20b919,83,928",
+      "ours_self_cures_claimed": 10,
+      "would_pay_anyway": 34
+    },
+    "delta": {
+      "recovery_rate_pp": -22.67,
+      "record_recovery_rate_pp": -11.11,
+      "recovered_paise": -254114600,
+      "contacts": -260,
+      "contacts_per_recovery": -2.57,
+      "compliance_breaches_avoided": 729
+    }
+  }
+}

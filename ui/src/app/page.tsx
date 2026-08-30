@@ -43,6 +43,7 @@ import {
   IconQueue,
   IconRules,
   IconSearch,
+  IconShield,
   IconSun,
 } from "@/components/icons";
 import Dashboard from "@/components/Dashboard";
@@ -50,8 +51,18 @@ import Queue from "@/components/Queue";
 import AuditTrail from "@/components/AuditTrail";
 import Promises from "@/components/Promises";
 import RulesStudio from "@/components/RulesStudio";
+import { TryIt } from "@/components/TryIt";
+import { Evidence } from "@/components/Evidence";
 
-type Tab = "dashboard" | "queue" | "promises" | "human" | "rules" | "audit";
+type Tab =
+  | "dashboard"
+  | "tryit"
+  | "queue"
+  | "promises"
+  | "human"
+  | "rules"
+  | "evidence"
+  | "audit";
 
 const TICKS: Array<[string, string]> = [
   ["20m", "20m"],
@@ -86,6 +97,14 @@ const PAGE_TITLE: Record<Tab, [string, string]> = {
   rules: [
     "Rules studio",
     "Every threshold is a policy decision somebody should be able to argue with. Change one and replay the same batch to see what it would have cost.",
+  ],
+  tryit: [
+    "Try it",
+    "Hand the agent something it has never seen. Preview writes nothing; commit makes it a real record on every screen behind this one.",
+  ],
+  evidence: [
+    "Evidence",
+    "Every claim this project makes, with the run that measured it — including the conditions under which it refuses to show you a number.",
   ],
   audit: [
     "Audit trail",
@@ -220,10 +239,12 @@ export default function Page() {
   const openPromises = board?.promises?.OPEN ?? 0;
   const nav: Array<[Tab, string, typeof IconDashboard, number | null]> = [
     ["dashboard", "Dashboard", IconDashboard, null],
+    ["tryit", "Try it", IconPlay, null],
     ["queue", "Recovery queue", IconQueue, records.length || null],
     ["promises", "Promises & replies", IconPromise, openPromises || null],
     ["human", "Human queue", IconHuman, queue.length || null],
     ["rules", "Rules studio", IconRules, null],
+    ["evidence", "Evidence", IconShield, null],
     ["audit", "Audit trail", IconAudit, null],
   ];
 
@@ -430,6 +451,8 @@ export default function Page() {
             )
           ) : tab === "dashboard" ? (
             <Dashboard board={board} onDrill={drill} />
+          ) : tab === "tryit" ? (
+            <TryIt onCommitted={refresh} />
           ) : tab === "queue" ? (
             <Queue
               records={records}
@@ -443,6 +466,8 @@ export default function Page() {
             <Promises onOpenRecord={openAudit} />
           ) : tab === "rules" ? (
             <RulesStudio onChanged={refresh} />
+          ) : tab === "evidence" ? (
+            <Evidence />
           ) : tab === "human" ? (
             <HumanQueue items={queue} onOpen={openAudit} />
           ) : openRecord ? (

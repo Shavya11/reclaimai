@@ -1,0 +1,80 @@
+{
+  "name": "ablation",
+  "claim": "Layer 2 earns its calls.",
+  "detail": "The same batch, run with and without the model. Two arms, two scratch databases, the same seed, the real runner and the real guardrails throughout. Diagnoses are NOT frozen \u2014 here diagnosis IS the independent variable.",
+  "test": "tests/test_ablation.py",
+  "command": "reclaim ablation --json",
+  "produced_at": "2026-08-30T11:42:08.185234+00:00",
+  "seed": 42,
+  "git_commit": "bad1a38",
+  "result": {
+    "void": false,
+    "seed": 42,
+    "population": 69,
+    "layer2_consulted": 365,
+    "layer2_api_calls": 38,
+    "layer2_failure_rate": 0.0,
+    "money_arrived_paise": {
+      "with_ai": 211785600.0,
+      "without_ai": 150993000.0,
+      "delta": 60792600.0,
+      "per_record_ci_95": [
+        271539.1304,
+        1667092.7536
+      ],
+      "n": 69
+    },
+    "recovered_paise": {
+      "with_ai": 74401900.0,
+      "without_ai": 0.0,
+      "delta": 74401900.0,
+      "per_record_ci_95": [
+        399715.942,
+        1893743.4783
+      ],
+      "n": 69
+    },
+    "organic_paise": {
+      "with_ai": 137383700.0,
+      "without_ai": 150993000.0,
+      "delta": -13609300.0,
+      "per_record_ci_95": [
+        -554100.0,
+        0.0
+      ],
+      "n": 69
+    },
+    "recovered_records": {
+      "with_ai": 33.0,
+      "without_ai": 16.0,
+      "delta": 17.0,
+      "per_record_ci_95": [
+        0.1594,
+        0.3623
+      ],
+      "n": 69
+    },
+    "human_escalations": {
+      "with_ai": 15.0,
+      "without_ai": 53.0,
+      "delta": -38.0,
+      "per_record_ci_95": [
+        -0.6667,
+        -0.4348
+      ],
+      "n": 69
+    },
+    "contacts": {
+      "with_ai": 58.0,
+      "without_ai": 0.0,
+      "delta": 58.0,
+      "per_record_ci_95": [
+        0.6522,
+        1.0145
+      ],
+      "n": 69
+    },
+    "harmful_actions": [],
+    "headline": "Layer 2 on 69 records: +\u20b96,07,926 recovered, 38 fewer human escalations, 0 harmful actions."
+  }
+}

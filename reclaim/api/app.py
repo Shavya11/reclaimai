@@ -712,6 +712,111 @@ def admin_replay(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
         _end()
 
 
+# --- the sandbox: what a visitor types, run through the real machinery --------
+#
+# Preview writes nothing. Commit writes a real record and lets the runner
+# execute it, and the record is a `USR_` one so it stays out of every published
+# figure — see provenance.py and sandbox.py for why each of those is true.
+
+
+@app.post("/api/sandbox/preview")
+def sandbox_preview(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    from .. import sandbox
+
+    try:
+        sub = sandbox.Submission(**body)
+    except Exception as exc:  # noqa: BLE001 — a bad submission is a 422, never a 500
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return sandbox.preview(sub)
+
+
+@app.post("/api/sandbox/commit", status_code=201)
+def sandbox_commit(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """Synchronous, unlike `/api/run-batch`. One record through one tick is a
+    second or two, and backgrounding it would mean polling for a result whose
+    only value is being seen immediately."""
+    from .. import sandbox
+
+    try:
+        sub = sandbox.Submission(**body)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if not _begin("committing a submission"):
+        raise HTTPException(status_code=409,
+                            detail=f"Already busy: {_seed_state['stage']}.")
+    try:
+        return sandbox.commit(sub)
+    finally:
+        _end()
+
+
+@app.post("/api/sandbox/reset")
+def sandbox_reset() -> dict[str, Any]:
+    """Back to the committed snapshot. A demo that lets strangers add records
+    needs the way back to be one button, not a CLI command."""
+    from .. import snapshot
+
+    if not _begin("restoring the snapshot"):
+        raise HTTPException(status_code=409,
+                            detail=f"Already busy: {_seed_state['stage']}.")
+    try:
+        restored = snapshot.restore()
+        if restored is None:
+            raise HTTPException(status_code=409,
+                                detail="No committed snapshot to restore.")
+        clock.reset()
+        return {"restored": restored}
+    finally:
+        _end()
+
+
+@app.post("/api/sandbox/reply")
+def sandbox_reply(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """One customer reply, read the way the batch reads one. Writes nothing —
+    the promise book is untouched, and the interesting output is what does not
+    happen: an accepted promise buys silence."""
+    from .. import sandbox
+
+    text = str(body.get("text") or "")
+    without_model = bool(body.get("without_model"))
+    return sandbox.read_reply(text, without_model=without_model)
+
+
+@app.post("/api/sandbox/guardrails")
+def sandbox_guardrails(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """All fourteen rules against one hypothetical action. The passes are shown
+    with the refusals, because "eleven passed, three refused" is a measurement
+    and a list of refusals alone is an opinion."""
+    from .. import sandbox
+
+    try:
+        hypothetical = sandbox.Hypothetical(**body)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return sandbox.simulate_guardrails(hypothetical)
+
+
+@app.get("/api/evidence")
+def evidence_index() -> dict[str, Any]:
+    """Every claim the Evidence tab renders, with its measurement when one has
+    been committed. A claim with no artifact is reported as missing rather than
+    hidden — a reader who cannot tell the ablation has not been run is worse off
+    than one who can."""
+    from .. import evidence
+
+    return {"claims": evidence.available()}
+
+
+@app.get("/api/sandbox/presets")
+def sandbox_presets() -> dict[str, Any]:
+    from .. import sandbox
+
+    return {"presets": sandbox.PRESETS,
+            "replies": sandbox.REPLY_PRESETS,
+            "scenarios": sandbox.GUARDRAIL_SCENARIOS}
+
+
 @app.get("/api/promises")
 def promises_list() -> dict[str, Any]:
     """The promise book. Open promises are the agent deliberately silent, which

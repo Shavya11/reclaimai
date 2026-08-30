@@ -1,0 +1,157 @@
+{
+  "name": "verify",
+  "claim": "The structural guarantees hold.",
+  "detail": "Every check is a property this project claims somewhere in prose. A guarantee nobody can run is a guarantee nobody should believe.",
+  "test": "reclaim verify",
+  "command": "reclaim verify --json",
+  "produced_at": "2026-08-30T11:38:53.789589+00:00",
+  "seed": 42,
+  "git_commit": "bad1a38",
+  "result": {
+    "checks": [
+      {
+        "name": "AtRiskRecord stays V2-generic",
+        "status": "PASS",
+        "detail": "no payment-specific fields; V2 adds a leak_type, not a migration"
+      },
+      {
+        "name": "money is integer paise",
+        "status": "PASS",
+        "detail": "no float touches money"
+      },
+      {
+        "name": "idempotency key is UNIQUE at the database",
+        "status": "PASS",
+        "detail": "UNIQUE(idempotency_key) \u2014 double execution is impossible"
+      },
+      {
+        "name": "audit_log is append-only at the database",
+        "status": "PASS",
+        "detail": "UPDATE and DELETE triggers present"
+      },
+      {
+        "name": "batch is reproducible from seed",
+        "status": "PASS",
+        "detail": "seed 42 -> 180 records, 1120981400 paise, digest 2506edd429e9728e, amounts AND timestamps identical every run"
+      },
+      {
+        "name": "detectors cover all V1 leak types",
+        "status": "PASS",
+        "detail": "abandoned_carts, failed_mandates, failed_payments, overdue_invoices"
+      },
+      {
+        "name": "every leak type has a detector",
+        "status": "PASS",
+        "detail": "4 detectors cover all 4 leak types"
+      },
+      {
+        "name": "outcome simulator covers every RootCause",
+        "status": "PASS",
+        "detail": "all 17 causes have a success probability"
+      },
+      {
+        "name": "deterministic map yields valid causes",
+        "status": "PASS",
+        "detail": "37 error codes mapped"
+      },
+      {
+        "name": "deterministic map matches harvested Razorpay codes",
+        "status": "PASS",
+        "detail": "all 2 harvested reasons are mapped or explicitly ambiguous"
+      },
+      {
+        "name": "policies.yaml covers every reachable cause",
+        "status": "PASS",
+        "detail": "24 reachable combinations, all with a row and an UNKNOWN fallback"
+      },
+      {
+        "name": "14 guardrails implemented and registered",
+        "status": "PASS",
+        "detail": "confidence_floor, consent, cooldown, daily_budget, dnd, frequency_cap, freshness, idempotency, kill_switch, max_attempts, promise_window, quiet_hours, state_validity, value_ceiling"
+      },
+      {
+        "name": "webhook signature verifies raw bytes",
+        "status": "PASS",
+        "detail": "raw-byte HMAC; re-serialized, unsigned and unkeyed bodies all refused"
+      },
+      {
+        "name": "webhook handles the five outcome events",
+        "status": "PASS",
+        "detail": "order.paid, payment.captured, payment.failed, payment_link.paid, subscription.charged"
+      },
+      {
+        "name": "API exposes every documented route",
+        "status": "PASS",
+        "detail": "7 required routes present"
+      },
+      {
+        "name": "no action executed twice",
+        "status": "PASS",
+        "detail": "182 executions, 182 distinct keys, 0 duplicates"
+      },
+      {
+        "name": "scoreboard balances",
+        "status": "PASS",
+        "detail": "\u20b91,12,09,814 = \u20b922,17,088 recovered + \u20b925,90,748 arrived unprompted + \u20b949,66,459 open + \u20b914,35,519 written off"
+      },
+      {
+        "name": "every recovered rupee traces to an intervention",
+        "status": "PASS",
+        "detail": "\u20b922,17,088 across 61 records, each traced from a verified webhook"
+      },
+      {
+        "name": "baseline gap is fully accounted for",
+        "status": "PASS",
+        "detail": "\u20b915,19,886 the naive run collects and we do not, of which \u20b915,05,335 is refused on purpose"
+      },
+      {
+        "name": "shipped rules pass the admin validator",
+        "status": "PASS",
+        "detail": "every shipped policy row and guardrail section validates"
+      },
+      {
+        "name": "rule_change_log is append-only",
+        "status": "PASS",
+        "detail": "the database refuses UPDATE, not just the code"
+      },
+      {
+        "name": "promise states are closed and resolved ones are dated",
+        "status": "PASS",
+        "detail": "8 promises, every state in the enum and every resolution dated"
+      },
+      {
+        "name": "no settled record is still queued for a human",
+        "status": "PASS",
+        "detail": "42 open row(s), none of them already settled"
+      },
+      {
+        "name": "self-cure is the same in both arms",
+        "status": "PASS",
+        "detail": "34 of 180 would have paid unprompted, identical every run and in every arm"
+      },
+      {
+        "name": "what-if replay leaves no trace",
+        "status": "PASS",
+        "detail": "3657 rows and the demo clock unchanged across a full two-arc replay"
+      },
+      {
+        "name": "visitor records stay out of the published figures",
+        "status": "PASS",
+        "detail": "a \u20b999,000 visitor record moved no published figure and landed in its own bucket"
+      },
+      {
+        "name": "sandbox preview leaves no trace",
+        "status": "PASS",
+        "detail": "5 previews wrote no row and moved no clock"
+      },
+      {
+        "name": "dashboard is built and servable",
+        "status": "PASS",
+        "detail": "ui/out/index.html present (23 KB), newer than every file in ui/src"
+      }
+    ],
+    "passed": 28,
+    "failed": 0,
+    "pending": 0
+  }
+}

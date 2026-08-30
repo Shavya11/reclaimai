@@ -38,6 +38,7 @@ from .db import (
 )
 from .enums import LeakType, NEVER_RETRY, RecordState, RootCause, Stage
 from .money import format_inr, format_inr_short
+from .provenance import is_user_record, seeded_only
 from .clock import now
 from .timeutil import to_ist
 from .webhooks.attribution import RESULT_RECOVERED
@@ -114,6 +115,15 @@ class Scoreboard:
     dso_after: float = 0.0
     promises: dict[str, int] = field(default_factory=dict)
     replies_read: int = 0
+    # Records a visitor typed into the demo and committed. Counted here and
+    # excluded from every figure above, for the same reason organic money is
+    # kept out of `recovered_paise`: the headline is a measurement over the
+    # seeded batch, and a stranger's submission is not part of what was
+    # measured. See provenance.py.
+    user_records: int = 0
+    user_at_risk_paise: int = 0
+    user_recovered_paise: int = 0
+    user_recovered_records: int = 0
     label: str = "ReclaimAI"
 
     @property
@@ -208,6 +218,12 @@ class Scoreboard:
             "promises": dict(self.promises),
             "promises_kept_rate": round(self.promises_kept_rate, 4),
             "replies_read": self.replies_read,
+            "user_records": self.user_records,
+            "user_at_risk_paise": self.user_at_risk_paise,
+            "user_recovered_paise": self.user_recovered_paise,
+            "user_recovered_records": self.user_recovered_records,
+            "user_at_risk_display": format_inr(self.user_at_risk_paise),
+            "user_recovered_display": format_inr(self.user_recovered_paise),
             "balances": self.balances,
         }
 
@@ -233,7 +249,9 @@ def compute(label: str = "ReclaimAI") -> Scoreboard:
     causes = diagnosed_causes()
 
     with SessionLocal() as session:
-        records = session.query(AtRiskRecordRow).all()
+        all_records = session.query(AtRiskRecordRow).all()
+        records = [r for r in all_records if not is_user_record(r.id)]
+        user_records = [r for r in all_records if is_user_record(r.id)]
 
         recovered_by_record: dict[str, int] = {}
         for record_id, amount in (
@@ -253,43 +271,63 @@ def compute(label: str = "ReclaimAI") -> Scoreboard:
         ):
             contacts_by_record[record_id] = int(n)
 
-        board.interventions = (session.query(InterventionRow)
-                               .filter(InterventionRow.outcome == "EXECUTED").count())
-        board.contacts = sum(contacts_by_record.values())
-        board.silent_retries = (session.query(InterventionRow)
-                                .filter(InterventionRow.outcome == "EXECUTED")
-                                .filter(InterventionRow.channel.is_(None)).count())
+        board.interventions = seeded_only(
+            session.query(InterventionRow)
+            .filter(InterventionRow.outcome == "EXECUTED"),
+            InterventionRow.record_id).count()
+        board.contacts = sum(n for rid, n in contacts_by_record.items()
+                             if not is_user_record(rid))
+        board.silent_retries = seeded_only(
+            session.query(InterventionRow)
+            .filter(InterventionRow.outcome == "EXECUTED")
+            .filter(InterventionRow.channel.is_(None)),
+            InterventionRow.record_id).count()
         # Three counts, because conflating them overstates how much work the
         # agent actually hands a person. `escalations` is everything ever
         # raised; some of those records then paid or were closed by a stopping
         # rule, and those rows are no longer anybody's to work.
-        board.escalations = session.query(HumanQueueRow).count()
-        board.escalations_resolved = (session.query(HumanQueueRow)
-                                      .filter(HumanQueueRow.resolved_at.isnot(None))
-                                      .count())
+        board.escalations = seeded_only(session.query(HumanQueueRow),
+                                        HumanQueueRow.record_id).count()
+        board.escalations_resolved = seeded_only(
+            session.query(HumanQueueRow)
+            .filter(HumanQueueRow.resolved_at.isnot(None)),
+            HumanQueueRow.record_id).count()
         board.escalations_open = board.escalations - board.escalations_resolved
-        board.webhooks_attributed = (session.query(InterventionRow)
-                                     .filter(InterventionRow.result.isnot(None))
-                                     .count())
+        board.webhooks_attributed = seeded_only(
+            session.query(InterventionRow)
+            .filter(InterventionRow.result.isnot(None)),
+            InterventionRow.record_id).count()
 
         # Two different counts, both honest, and quoting the wrong one is how a
         # number stops meaning what it says. `fired` is every refusal, which
         # over a dozen ticks includes the same record deferred again and again.
         # `records` is how many distinct records each guardrail actually held
         # back. The demo line "wanted N, allowed M" is about records.
-        blocked = (session.query(AuditLogRow.guardrail, func.count("*"),
-                                 func.count(func.distinct(AuditLogRow.record_id)))
-                   .filter(AuditLogRow.stage == Stage.GUARDRAIL.value)
-                   .filter(AuditLogRow.outcome == "BLOCKED")
-                   .filter(AuditLogRow.guardrail.isnot(None))
-                   .group_by(AuditLogRow.guardrail).all())
+        blocked = seeded_only(
+            session.query(AuditLogRow.guardrail, func.count("*"),
+                          func.count(func.distinct(AuditLogRow.record_id)))
+            .filter(AuditLogRow.stage == Stage.GUARDRAIL.value)
+            .filter(AuditLogRow.outcome == "BLOCKED")
+            .filter(AuditLogRow.guardrail.isnot(None))
+            .group_by(AuditLogRow.guardrail),
+            AuditLogRow.record_id).all()
         board.guardrails_fired = dict(
             sorted(((g, int(n)) for g, n, _ in blocked), key=lambda kv: -kv[1]))
         board.guardrails_records = {g: int(d) for g, _, d in blocked}
 
-        board.replies_read = (session.query(AuditLogRow)
-                              .filter(AuditLogRow.stage == Stage.REPLY.value)
-                              .count())
+        board.replies_read = seeded_only(
+            session.query(AuditLogRow)
+            .filter(AuditLogRow.stage == Stage.REPLY.value),
+            AuditLogRow.record_id).count()
+
+        # The visitor bucket. Counted, never folded in — see provenance.py.
+        for row in user_records:
+            board.user_records += 1
+            board.user_at_risk_paise += row.amount
+            got = recovered_by_record.get(row.id, 0)
+            if got:
+                board.user_recovered_paise += got
+                board.user_recovered_records += 1
 
     from .promises import counts as promise_counts
 
@@ -364,9 +402,11 @@ def _dso() -> tuple[float, float]:
     """
     now_ist = now()
     with SessionLocal() as session:
-        rows = (session.query(AtRiskRecordRow)
-                .filter(AtRiskRecordRow.leak_type
-                        == LeakType.OVERDUE_INVOICE.value).all())
+        rows = seeded_only(
+            session.query(AtRiskRecordRow)
+            .filter(AtRiskRecordRow.leak_type
+                    == LeakType.OVERDUE_INVOICE.value),
+            AtRiskRecordRow.id).all()
         if not rows:
             return 0.0, 0.0
 
