@@ -9,12 +9,11 @@ const nextConfig: NextConfig = {
   images: { unoptimized: true },
   trailingSlash: false,
 
-  // Turbopack infers the project root by walking up for a lockfile. On Vercel
-  // the repo root sits one level above this directory and Vercel rewrites the
-  // config before the build, and the inference landed there instead of here —
-  // "Couldn't find any `pages` or `app` directory", on a tree that has one.
-  // Locally the walk-up finds nothing and the same build succeeds, which is why
-  // this only ever failed on the Git deployments. Say the root outright.
+  // Turbopack infers the project root by walking up for a lockfile. Nothing
+  // above this directory is a JS project today, so the inference is right by
+  // accident; naming the root keeps it right if that ever stops being true.
+  // (This was not what broke the Vercel builds — that was an unset root
+  // directory on the Vercel project itself. See DEPLOY.md §2.)
   turbopack: { root: path.resolve(import.meta.dirname) },
 };
 

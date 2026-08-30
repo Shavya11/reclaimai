@@ -101,6 +101,28 @@ render.yaml — nothing else changes.
 2. **Set Root Directory to `ui`.** This is the one setting people miss, and
    without it Vercel tries to build the Python at the repo root and fails.
    Framework preset should auto-detect as Next.js.
+
+   > This step was written here and then not actually performed, and it cost an
+   > afternoon. The project was first created by `vercel` from inside `ui/`, and
+   > the CLI uploads the directory you stand in, so it never needs a root
+   > directory and never sets one. Every CLI deploy therefore worked. When the
+   > repo was later connected to GitHub, every push built from the repo ROOT and
+   > failed with `Couldn't find any 'pages' or 'app' directory` — on a tree that
+   > plainly has `ui/src/app`. Two deploy paths, one of them silently
+   > misconfigured, and the working one hid it.
+   >
+   > It is set now (`rootDirectory: "ui"`). To check rather than trust:
+   >
+   > ```bash
+   > cd ui && npx vercel pull --yes --environment=production
+   > #  .vercel/project.json  ->  "rootDirectory": "ui"      NOT null
+   > ```
+   >
+   > The tell in a failing build log is the script header. Built from `ui`, npm
+   > prints the package name — `> ui@0.1.0 vercel-build`. Built from the repo
+   > root it prints a bare `> vercel-build`, and `next.config` without the
+   > `.ts`. If you see the bare form, the root directory is wrong; nothing in
+   > the source will fix it.
 3. Add an environment variable:
 
    ```
