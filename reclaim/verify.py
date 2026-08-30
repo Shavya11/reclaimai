@@ -604,13 +604,36 @@ def _baseline_gap_is_fully_accounted_for() -> Check:
 
 
 def _dashboard_is_built() -> Check:
+    """Present AND not older than the source it was built from.
+
+    `ui/out` is tracked deliberately so a reviewer can clone and run without an
+    npm install, and `reclaim serve` serves it directly. That makes staleness
+    invisible in the worst way: the dashboard loads, looks right, and is a
+    previous version of itself. It has already happened once — a commit shipped
+    source changes with an `out/` built seventeen minutes earlier.
+    """
     name = "dashboard is built and servable"
     out = ROOT / "ui" / "out" / "index.html"
     if not out.exists():
         return Check(name, PENDING,
                      "run `npm run build` in ui/ — the API serves ui/out")
+
+    built = out.stat().st_mtime
+    src = ROOT / "ui" / "src"
+    newer = sorted(
+        p.relative_to(ROOT).as_posix()
+        for p in src.rglob("*")
+        if p.is_file() and p.stat().st_mtime > built
+    )
+    if newer:
+        return Check(name, FAIL,
+                     f"ui/out is older than {len(newer)} source file(s) — "
+                     f"run `npm run build` in ui/. First: {newer[0]}")
+
     size = out.stat().st_size
-    return Check(name, PASS, f"ui/out/index.html present ({size // 1024} KB)")
+    return Check(name, PASS,
+                 f"ui/out/index.html present ({size // 1024} KB), newer than "
+                 f"every file in ui/src")
 
 
 CHECKS = [
