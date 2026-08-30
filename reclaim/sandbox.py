@@ -33,6 +33,7 @@ somebody too often, which would quietly make the demo look safer than it is.
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
@@ -167,15 +168,7 @@ def _diagnose(record: AtRiskRecord, *, without_model: bool):
     from .brain.diagnosis.engine import diagnose_batch
 
     layer1_hit = layer1(record)
-    llm = None
-    if not without_model:
-        from .api.app import _llm  # the same resolver the batch endpoint uses
-
-        try:
-            llm = _llm()
-        except Exception as exc:  # noqa: BLE001 — a missing key is not an error
-            log.debug("sandbox: no layer 2 available: %s", exc)
-
+    llm = None if without_model else _shared_llm()
     diagnoses, signals = diagnose_batch([record], {}, llm=llm)
     return layer1_hit, diagnoses[record.id], signals.get(record.id)
 
@@ -297,14 +290,33 @@ def commit(sub: Submission) -> dict[str, Any]:
     return payload
 
 
-def _resolve_llm():
-    try:
-        from .api.app import _llm
+_LLM_LOCK = threading.Lock()
+_LLM: list = []  # a one-slot box, so "resolved to None" is distinguishable
 
-        return _llm()
-    except Exception as exc:  # noqa: BLE001
-        log.debug("sandbox commit: no layer 2 available: %s", exc)
-        return None
+
+def _shared_llm():
+    """One diagnoser for the whole process, because the cache lives on it.
+
+    `api.app._llm()` builds a NEW diagnoser per call and `CachedDiagnoser`
+    keeps `self._cache` on the instance, so a fresh one starts empty every time.
+    For a batch that is harmless — one instance serves the whole run. For the
+    sandbox it meant every preview was a live API call: the presets were never
+    warm, an identical submission cost quota twice, and the same input could
+    come back diagnosed differently, which it did.
+
+    Kept local rather than changing `_llm()`, so the batch endpoints keep the
+    exact per-run cache behaviour every published figure was measured under.
+    """
+    with _LLM_LOCK:
+        if not _LLM:
+            from .api.app import _llm
+
+            _LLM.append(_llm())
+        return _LLM[0]
+
+
+def _resolve_llm():
+    return _shared_llm()
 
 
 _DECIDED_BY = {
@@ -470,12 +482,15 @@ def read_reply(text: str, *, without_model: bool = False) -> dict[str, Any]:
 
     reading = None
     if not without_model:
-        try:
-            extractor = _build_extractor()
-            if extractor is not None:
-                reading = extractor.read(reply, today=frm)
-        except Exception as exc:  # noqa: BLE001 — never raise at a reader
-            log.debug("sandbox reply: extractor unavailable: %s", exc)
+        extractor = _build_extractor()
+        if extractor is not None:
+            # `CachedDiagnoser.__call__(*args)` — POSITIONAL only, and it never
+            # raises: an unreachable API returns None so the caller falls
+            # through to its own fallback. So there is nothing to catch here,
+            # and catching anyway is how the first version of this hid an
+            # AttributeError for a method that does not exist and reported
+            # "no model available" while a model sat right there.
+            reading = extractor(reply, frm)
 
     if reading is None:
         reading = keyword_reading(reply)
@@ -550,6 +565,15 @@ def read_reply(text: str, *, without_model: bool = False) -> dict[str, Any]:
 
 
 def _build_extractor():
+    """The reply reader, or None when no key is configured.
+
+    Deliberately NOT wrapped in a try/except. `build_extractor` returns None
+    rather than raising when there is no key, and the extractor it returns never
+    raises either. A broad catch here would turn a real bug into the string
+    "no model available", which is the one sentence this function must never say
+    untruthfully — it is what a reader uses to decide whether the model was
+    consulted at all.
+    """
     from .brain.conversation import build_extractor
 
     extractor = build_extractor()

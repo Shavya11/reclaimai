@@ -4,9 +4,9 @@
   "detail": "Every check is a property this project claims somewhere in prose. A guarantee nobody can run is a guarantee nobody should believe.",
   "test": "reclaim verify",
   "command": "reclaim verify --json",
-  "produced_at": "2026-08-30T11:38:53.789589+00:00",
+  "produced_at": "2026-08-30T12:36:05.462793+00:00",
   "seed": 42,
-  "git_commit": "bad1a38",
+  "git_commit": "712f6ea",
   "result": {
     "checks": [
       {
@@ -147,7 +147,7 @@
       {
         "name": "dashboard is built and servable",
         "status": "PASS",
-        "detail": "ui/out/index.html present (23 KB), newer than every file in ui/src"
+        "detail": "ui/out/index.html present (24 KB), newer than every file in ui/src"
       }
     ],
     "passed": 28,

@@ -25,6 +25,7 @@ from reclaim.db import (
     AtRiskRecordRow, AuditLogRow, ExecutedActionRow, InterventionRow,
     SessionLocal, reset_database,
 )
+from reclaim.brain.conversation.intent import keyword_reading
 from reclaim.enums import LeakType
 from reclaim.provenance import USER_PREFIX, is_user_record
 from reclaim.runner import run_batch
@@ -231,3 +232,83 @@ def test_detected_at_is_timezone_aware_ist():
     record = sandbox.build_record(_submission(), "USR_9000")
     assert record.detected_at.tzinfo is not None
     assert record.detected_at <= clock.now() + timedelta(seconds=1)
+
+
+# --- the reply reader, and the three bugs that hid behind each other ----------
+
+
+def test_the_extractor_is_called_the_way_it_is_actually_shaped():
+    """`CachedDiagnoser.__call__(*args)` takes POSITIONAL arguments and has no
+    `read()` method.
+
+    The first version of `read_reply` called `extractor.read(reply, today=...)`
+    inside a broad `except Exception`, so the AttributeError was swallowed and
+    every reply came back "No model available and no recognisable phrase" —
+    while a working model sat right there. A false sentence about whether the
+    model was consulted is the one thing that screen must never print.
+    """
+    seen = {}
+
+    class Extractor:
+        available = True
+
+        def __call__(self, *args):
+            seen["args"] = args
+            return keyword_reading("I will pay on Friday")
+
+        def read(self, *a, **k):  # noqa: D401 - must never be preferred
+            raise AssertionError("read() is not the extractor's interface")
+
+    import reclaim.sandbox as sbx
+
+    original = sbx._build_extractor
+    sbx._build_extractor = lambda: Extractor()
+    try:
+        sbx.read_reply("I will pay on Friday")
+    finally:
+        sbx._build_extractor = original
+
+    assert "args" in seen, "the extractor was never called"
+    assert seen["args"][0] == "I will pay on Friday"
+
+
+def test_free_text_submissions_do_not_share_one_cache_key():
+    """The signature ignored `description`, which is the only field a free-text
+    submission varies. Three unrelated sentences hashed identically, so a warm
+    cache would have answered the second with the first one's diagnosis —
+    confidently, and invisibly."""
+    from reclaim.brain.diagnosis.llm_diagnoser import signature
+
+    texts = ["Card has expired, customer needs a new one",
+             "Customer disputes this charge entirely",
+             "Bank was down for an hour last night"]
+    keys = {signature(sandbox.build_record(sandbox.Submission(text=t), "USR_x"))
+            for t in texts}
+    assert len(keys) == 3, "different submissions collapsed to one cache key"
+
+
+def test_the_seeded_batch_keeps_its_cache_grouping():
+    """The fix above must not split the seeded batch. AMBIGUOUS records share a
+    reason and vary their wording, so keying on description unconditionally
+    would have changed the API-call count the ablation publishes."""
+    from collections import defaultdict
+
+    from reclaim.brain.diagnosis.llm_diagnoser import signature
+    from reclaim.synthetic import generate
+
+    groups = defaultdict(set)
+    for record in generate(seed=42).records:
+        groups[signature(record)].add(record.id)
+    # Every seeded record carries a reason code, so none of them can be keyed on
+    # description — which is what keeps the grouping identical.
+    for record in generate(seed=42).records:
+        error = record.raw_signals.get("error") or {}
+        if record.leak_type is not LeakType.ABANDONED_CART and error:
+            assert error.get("reason"), f"{record.id} has no reason code"
+
+
+def test_the_sandbox_diagnoser_is_shared_so_the_cache_survives():
+    """`api.app._llm()` builds a new diagnoser per call and the cache lives on
+    the instance, so the sandbox never had one. Every preview was a live API
+    call, and identical input could come back diagnosed differently."""
+    assert sandbox._shared_llm() is sandbox._shared_llm()

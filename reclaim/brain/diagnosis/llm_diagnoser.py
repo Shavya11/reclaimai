@@ -550,9 +550,20 @@ def signature(record: AtRiskRecord, signal: CohortSignal | None = None) -> str:
 
     error = record.raw_signals.get("error") or {}
     history = record.raw_signals.get("customer_history") or {}
+    reason = str(error.get("reason") or "")
+    # With no reason code, the DESCRIPTION is the only thing that varies, and
+    # leaving it out of the key makes every such record the same question. That
+    # is right for the seeded batch, where every record carries a reason and the
+    # descriptions are canned per reason — and catastrophically wrong for a
+    # sandbox submission, where free text IS the signal: three unrelated
+    # sentences hashed identically and the second would have been answered with
+    # the first one's diagnosis, confidently and invisibly.
+    # Conditional on purpose. Adding it unconditionally would split the
+    # AMBIGUOUS records, which share a reason and vary their wording, and change
+    # the API-call count the ablation publishes.
     parts = [
         str(error.get("code")),
-        str(error.get("reason")),
+        reason or f"desc:{error.get('description')}",
         str(record.raw_signals.get("method")),
         str(record.raw_signals.get("issuer_bank")),
         str(record.raw_signals.get("attempt_number", 1)),

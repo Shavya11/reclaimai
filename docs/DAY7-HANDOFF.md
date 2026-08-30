@@ -182,6 +182,47 @@ documents. Re-running will move it again. **This is expected, not a regression.*
 
 ---
 
+## 6b. Three bugs found after the first commit, all now fixed
+
+Found by driving the deployed site rather than by a test, which is worth
+recording: the suite was green through all three.
+
+**The reply reader never called the model.** `read_reply` called
+`extractor.read(reply, today=...)` — a method that does not exist; the interface
+is `CachedDiagnoser.__call__(*args)`, positional. The AttributeError was caught
+by a broad `except Exception` and logged at debug, so every reply fell through to
+the keyword matcher and the screen printed *"No model available and no
+recognisable phrase"* while a working model sat right there. The same failure
+CLAUDE.md warns about for guardrails — a thing that throws is a thing that gets
+silently skipped — committed in a reader instead. There is now no try/except
+there at all, because the extractor already never raises.
+
+**The sandbox never hit the cache.** `api.app._llm()` builds a NEW diagnoser per
+call and `CachedDiagnoser` keeps `self._cache` on the instance. Harmless for a
+batch, where one instance serves the whole run; for the sandbox it meant every
+preview was a live API call on a public endpoint, presets were never warm, and
+identical input came back diagnosed differently — observed live: three identical
+requests returned INSUFFICIENT_FUNDS, UNKNOWN, INSUFFICIENT_FUNDS. Fixed with a
+process-wide diagnoser local to `sandbox.py`, deliberately NOT by changing
+`_llm()`, so the batch endpoints keep the exact cache behaviour every published
+figure was measured under.
+
+**The cache key ignored `description`.** `signature()` keys on code, reason,
+method, issuer, attempt and two booleans. Correct for the seeded batch, where
+every record has a reason code and descriptions are canned per reason. Wrong for
+the sandbox, where free text IS the signal: three unrelated sentences hashed
+identically, so a warm cache would answer the second with the first one's
+diagnosis — confidently and invisibly. Now keyed on description ONLY when the
+reason is empty, which never happens in the seeded batch. Verified by partition
+rather than assumed: the 120 payment records fall into the same 98 groups with
+the same members before and after, so the ablation's API-call count cannot move.
+
+The first bug hid the second, and the second hid the third. Fixing the cache
+without fixing the key would have made the sandbox return a stale, confident,
+wrong diagnosis for every submission after the first.
+
+---
+
 ## 7. How to run it
 
 ```bash
