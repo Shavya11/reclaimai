@@ -217,10 +217,58 @@ function Verify({ result }: { result: Record<string, unknown> }) {
   );
 }
 
+function Webhook({ result }: { result: Record<string, unknown> }) {
+  const r = result as {
+    deliveries: Array<{
+      event_type: string;
+      outcome: string;
+      record_id: string | null;
+      amount_paise: number;
+      simulated: boolean;
+      received_at: string;
+    }>;
+    endpoint: string;
+    payment_link: string;
+    note: string;
+  };
+  return (
+    <div>
+      <ul className="space-y-1.5">
+        {(r.deliveries ?? []).map((d, i) => (
+          <li
+            key={i}
+            className="flex flex-wrap items-baseline gap-x-3 rounded-2xl border border-line bg-panel p-2.5"
+          >
+            <span className="num text-[12px] font-medium text-ink">
+              {d.event_type}
+            </span>
+            <span
+              className={`num text-[11px] ${
+                d.outcome === "PROCESSED" ? "text-green" : "text-muted"
+              }`}
+            >
+              {d.outcome}
+            </span>
+            {d.record_id && (
+              <span className="num text-[11px] text-dim">{d.record_id}</span>
+            )}
+            <span className="num ml-auto rounded-full border border-green/40 bg-greenwash px-2 py-0.5 text-[10px] font-semibold text-green">
+              simulated: false
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 rounded-2xl border border-line bg-panel2 p-3 text-[11px] leading-relaxed text-muted">
+        {r.note}
+      </p>
+    </div>
+  );
+}
+
 const BODIES: Record<
   string,
   (p: { result: Record<string, unknown> }) => React.ReactElement
-> = { ablation: Ablation, baseline: Baseline, verify: Verify };
+> = { ablation: Ablation, baseline: Baseline, webhook: Webhook, verify: Verify };
 
 export function Evidence() {
   const [claims, setClaims] = useState<EvidenceClaim[] | null>(null);

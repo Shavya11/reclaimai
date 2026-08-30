@@ -56,6 +56,17 @@ CLAIMS: dict[str, dict[str, str]] = {
         "test": "tests/test_scoreboard.py",
         "command": "reclaim baseline --json",
     },
+    "webhook": {
+        "claim": "Razorpay delivered, and we verified it.",
+        "detail": "Not a replay. A payment link minted by the executor, paid "
+                  "with a test card in a browser, and delivered by Razorpay to "
+                  "the public endpoint — HMAC-verified over the raw bytes, "
+                  "deduplicated, and walked back link -> intervention -> record. "
+                  "`simulated: false` is the whole point of every row: nothing "
+                  "here was signed by us.",
+        "test": "tests/test_webhooks.py",
+        "command": "see DEPLOY.md step 4 — pay one test link",
+    },
     "verify": {
         "claim": "The structural guarantees hold.",
         "detail": "Every check is a property this project claims somewhere in "

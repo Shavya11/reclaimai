@@ -241,10 +241,15 @@ so the plan does not read as if the project stopped when the checkboxes ran out.
 - [x] **Deployed scoreboard reconciled with the README** — the boot seed now
       walks the full arc *and* passes its diagnoser, so the published number and
       the live one are the same number.
-- [ ] **Re-capture live webhook proof into the repo** — the five verified
-      deliveries were lost with Render's `/tmp`. Pay one link, save the
-      `simulated: false` JSON under `evidence/`. Proof on an ephemeral disk has
-      an expiry date; proof in git does not. *(Still open after Day 5.)*
+- [x] **Re-capture live webhook proof into the repo** — done, and this time it
+      is in git. `evidence/webhook.json` holds five deliveries Razorpay sent to
+      the public endpoint after a ₹683 test link was paid in a browser, every
+      one `simulated: false`, HMAC-verified over the raw bytes and walked back
+      link → intervention → `REC_5085`. Two rows read `ALREADY_ATTRIBUTED`
+      rather than `PROCESSED` because the record was already RECOVERED in the
+      restored snapshot — the deduplication working, not a miss — and
+      `payment.authorized` is `IGNORED` by design, because authorization is not
+      capture. The last untested seam in the system is now tested.
 - [ ] **Rotate the Gemini API key** after the buildathon — it was handled in
       plaintext during setup. *(Still open after Day 5.)*
 

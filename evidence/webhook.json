@@ -1,0 +1,68 @@
+{
+  "name": "webhook",
+  "claim": "Razorpay delivered, and we verified it.",
+  "detail": "Not a replay. A payment link minted by the executor, paid with a test card in a browser, and delivered by Razorpay to the public endpoint \u2014 HMAC-verified over the raw bytes, deduplicated, and walked back link -> intervention -> record. `simulated: false` is the whole point of the row: nothing here was signed by us.",
+  "test": "tests/test_webhooks.py",
+  "command": "see DEPLOY.md step 4 \u2014 pay one test link",
+  "produced_at": "2026-08-30T13:11:15.840945+00:00",
+  "seed": 42,
+  "git_commit": "b1e2041",
+  "result": {
+    "endpoint": "https://reclaimai-api.onrender.com/webhooks/razorpay",
+    "payment_link": "https://rzp.io/rzp/TUHHbtI",
+    "deliveries": [
+      {
+        "event_id": "TVzbGvTdmwgbxT",
+        "event_type": "payment_link.paid",
+        "razorpay_ref": "plink_TVzUIBlbgxHtxw",
+        "record_id": "REC_5085",
+        "amount_paise": 68300,
+        "outcome": "ALREADY_ATTRIBUTED",
+        "simulated": false,
+        "received_at": "2026-11-05T11:07:57.078801"
+      },
+      {
+        "event_id": "TVzbGFEwhUZbFU",
+        "event_type": "order.paid",
+        "razorpay_ref": "order_TVzaFdIDSz8BGv",
+        "record_id": "REC_5085",
+        "amount_paise": 68300,
+        "outcome": "ALREADY_ATTRIBUTED",
+        "simulated": false,
+        "received_at": "2026-11-05T11:07:56.693339"
+      },
+      {
+        "event_id": "TVzbFeYtWIuOvt",
+        "event_type": "payment.captured",
+        "razorpay_ref": "order_TVzaFdIDSz8BGv",
+        "record_id": "REC_5085",
+        "amount_paise": 68300,
+        "outcome": "PROCESSED",
+        "simulated": false,
+        "received_at": "2026-11-05T11:07:56.071013"
+      },
+      {
+        "event_id": "TVzbEKRyZMCc1J",
+        "event_type": "payment.authorized",
+        "razorpay_ref": "order_TVzaFdIDSz8BGv",
+        "record_id": null,
+        "amount_paise": 68300,
+        "outcome": "IGNORED",
+        "simulated": false,
+        "received_at": "2026-11-05T11:07:54.845392"
+      },
+      {
+        "event_id": "TVzazKHF9g4mG2",
+        "event_type": "payment.failed",
+        "razorpay_ref": "order_TVzaFdIDSz8BGv",
+        "record_id": "REC_5085",
+        "amount_paise": 68300,
+        "outcome": "PROCESSED",
+        "simulated": false,
+        "received_at": "2026-11-05T11:07:41.112832"
+      }
+    ],
+    "count": 5,
+    "note": "ALREADY_ATTRIBUTED rather than PROCESSED on two rows because the record was already RECOVERED in the restored snapshot when the money arrived. That is the deduplication working: the same rupees are not counted twice. payment.authorized is IGNORED by design \u2014 authorization is not capture."
+  }
+}
