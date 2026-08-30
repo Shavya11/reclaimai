@@ -52,6 +52,58 @@ PROMISE_KEPT = 0.62
 ATTEMPT_DECAY = 0.6
 
 
+# --- self-cure -------------------------------------------------------------
+#
+# P(this customer pays with no prompting from us, ever).
+#
+# Without this the simulator says a record nobody touches never recovers, which
+# is false and which flatters us twice over: every record the agent correctly
+# refuses to chase counts as a total loss, and any comparison against a strategy
+# that does nothing wins by construction rather than by working.
+#
+# Keyed on the PLANTED cause, never on the diagnosis. Self-cure is a fact about
+# the world; what we happened to think the failure was cannot change whether the
+# customer pays. That is also what keeps it identical across arms — the property
+# that makes any comparison using it sound.
+#
+# STATED ESTIMATES, not measured rates. The ordering is the part worth arguing
+# with: a bank outage clears itself and the customer simply tries again, while a
+# dead card needs the customer to go and find another one. Businesses pay
+# invoices through their own approval cycle whether or not anybody chases them,
+# which is why the receivables numbers are the highest here.
+SELF_CURE: dict[RootCause, float] = {
+    RootCause.BANK_DOWNTIME: 0.35,        # transient; they retry and it works
+    RootCause.LIMIT_EXCEEDED: 0.22,       # tomorrow the daily cap resets
+    RootCause.TECHNICAL_ERROR: 0.25,
+    RootCause.INSUFFICIENT_FUNDS: 0.20,   # payday arrives with or without us
+    RootCause.AUTH_DROPOFF: 0.15,         # some come back and finish the OTP
+    RootCause.CART_ABANDONMENT: 0.10,
+    RootCause.EXPIRED_INSTRUMENT: 0.06,   # needs them to find another card
+    RootCause.INVALID_INSTRUMENT: 0.05,
+    # Receivables. A finance team's approval cycle turns over on its own
+    # schedule, and an invoice that was only ever waiting on a signature gets
+    # one eventually.
+    RootCause.AWAITING_APPROVAL: 0.40,
+    RootCause.PAYMENT_STALLED: 0.25,
+    RootCause.BUYER_CASH_CRUNCH: 0.12,
+    RootCause.INVOICE_NOT_RECEIVED: 0.08,  # nobody pays what never arrived
+    # Zero, and each for a different reason worth keeping straight: the issuer
+    # will refuse the card again, the mandate no longer exists to debit, the
+    # corridor is blocked, and a dispute is settled by a conversation rather
+    # than by waiting.
+    RootCause.RISK_DECLINE: 0.0,
+    RootCause.MANDATE_REVOKED: 0.0,
+    RootCause.POLICY_BLOCK: 0.0,
+    RootCause.INVOICE_DISPUTED: 0.0,
+    RootCause.UNKNOWN: 0.10,
+}
+
+# How long an unprompted payment takes to show up, in days after detection.
+# Uniform across the window: a shape with more structure would be inventing
+# detail the estimate does not support.
+SELF_CURE_WINDOW_DAYS = 30
+
+
 def probability(
     cause: RootCause,
     *,

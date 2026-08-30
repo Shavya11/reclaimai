@@ -265,3 +265,24 @@ def test_a_record_escalated_then_paid_leaves_the_queue():
     assert record_id not in {i["record_id"]
                              for i in human_queue.open_items(causes={})}
     assert human_queue.resolved_count() >= 1
+
+
+def test_a_reply_arriving_after_the_money_does_not_queue_anyone():
+    """A reply can land after the invoice was already paid.
+
+    The contact goes out, the customer pays, and their answer to the contact
+    arrives afterwards — settlement runs before replies are read, so this is the
+    normal order, not a race. Reading the reply is still right; putting a
+    settled record on somebody's desk is not.
+    """
+    from reclaim.brain.conversation.handler import _to_human
+    from reclaim.repository import load_records
+
+    _record("R1", amount=10_000_00, state=RecordState.RECOVERED)
+    record = next(r for r in load_records(state=None) if r.id == "R1")
+
+    _to_human(record, "reply not confidently understood", clock.now())
+
+    with SessionLocal() as session:
+        assert session.query(HumanQueueRow).count() == 0, (
+            "a record that already paid was put back on somebody's list")

@@ -229,6 +229,40 @@ def _promise_transitions_are_closed() -> Check:
                  f"resolution dated")
 
 
+def _self_cure_is_identical_across_strategies() -> Check:
+    """Both arms are handed the same customers.
+
+    Self-cure is a fact about a customer, drawn from the planted cause and a
+    dedicated stream, so it cannot depend on what either strategy did. If it
+    ever could, the baseline comparison would be measuring two different worlds
+    and calling the difference strategy.
+
+    This is the property recoup found the hard way: their control arm stopped
+    being observed sooner and was credited fewer unprompted payments for a
+    purely bookkeeping reason, which inflated the measured lift.
+    """
+    name = "self-cure is the same in both arms"
+    from .synthetic import generate
+
+    a, b = generate(seed=42), generate(seed=42)
+    if a.self_cure.keys() != b.self_cure.keys():
+        return Check(name, FAIL, "two runs of one seed disagree on who pays")
+
+    # Nobody who cannot pay is allowed to pay anyway.
+    from .synthetic.outcomes import SELF_CURE
+
+    impossible = sorted({
+        a.truth[rid].value for rid in a.self_cure
+        if SELF_CURE.get(a.truth[rid], 0.0) == 0.0})
+    if impossible:
+        return Check(name, FAIL,
+                     f"caused a self-cure on a cause rated zero: "
+                     f"{', '.join(impossible)}")
+    return Check(name, PASS,
+                 f"{len(a.self_cure)} of {len(a.records)} would have paid "
+                 f"unprompted, identical every run and in every arm")
+
+
 def _no_settled_record_still_sits_in_the_queue() -> Check:
     """A record that recovered or was closed must not still be on a person's
     list.
@@ -464,9 +498,9 @@ def _webhook_handlers_cover_the_five_events() -> Check:
 
 
 def _scoreboard_balances() -> Check:
-    """recovered + open + unrecoverable == at risk. A scoreboard that does not
-    add up is one where a rupee got counted twice, and nothing crashes when it
-    happens."""
+    """recovered + organic + open + unrecoverable == at risk. A scoreboard that
+    does not add up is one where a rupee got counted twice, and nothing crashes
+    when it happens."""
     from .money import format_inr
     from .scoreboard import compute
 
@@ -477,10 +511,11 @@ def _scoreboard_balances() -> Check:
     if not board.balances:
         return Check(name, FAIL,
                      f"{format_inr(board.at_risk_paise)} at risk but the buckets "
-                     f"sum to {format_inr(board.recovered_paise + board.open_paise + board.unrecoverable_paise)}")
+                     f"sum to {format_inr(board.recovered_paise + board.organic_paise + board.open_paise + board.unrecoverable_paise)}")
     return Check(name, PASS,
                  f"{format_inr(board.at_risk_paise)} = "
                  f"{format_inr(board.recovered_paise)} recovered + "
+                 f"{format_inr(board.organic_paise)} arrived unprompted + "
                  f"{format_inr(board.open_paise)} open + "
                  f"{format_inr(board.unrecoverable_paise)} written off")
 
@@ -602,6 +637,7 @@ CHECKS = [
     _rule_change_log_is_append_only,
     _promise_transitions_are_closed,
     _no_settled_record_still_sits_in_the_queue,
+    _self_cure_is_identical_across_strategies,
     _replay_is_side_effect_free,
     _dashboard_is_built,
 ]

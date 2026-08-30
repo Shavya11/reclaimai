@@ -66,5 +66,5 @@ def test_the_real_versus_modelled_table_is_present():
     # split across a line break and still read correctly to a human.
     text = " ".join(README.read_text(encoding="utf-8").split())
     assert "## What is real, and what is modelled" in text
-    for phrase in ("no self-cure path", "stated estimates", "RISK_DECLINE"):
+    for phrase in ("Self-cure is modelled", "stated estimates", "RISK_DECLINE"):
         assert phrase in text, f"the limitations no longer mention {phrase!r}"

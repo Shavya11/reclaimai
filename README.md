@@ -29,7 +29,8 @@ number it produced on `seed 42`. Nothing here is a figure typed into a document.
 | No contact lands inside a promise window | [rules/promise_window.py](reclaim/brain/guardrails/rules/promise_window.py) | `test_invariant_no_contact_lands_inside_a_promise_window` | 2 refusals |
 | A settled record leaves the human queue | [human_queue.py](reclaim/human_queue.py) | `test_a_record_escalated_then_paid_leaves_the_queue` | 51 raised, 1 self-resolved |
 | The what-if replay writes nothing | [whatif.py](reclaim/whatif.py) | `test_a_replay_changes_nothing_in_the_live_database` | 3,848 rows unchanged |
-| Layer 2 earns its calls | [experiments/ablation.py](reclaim/experiments/ablation.py) | `tests/test_ablation.py` | +₹12,74,886, 51 fewer escalations |
+| Layer 2 earns its calls | [experiments/ablation.py](reclaim/experiments/ablation.py) | `tests/test_ablation.py` | +₹5,92,424 net, 38 fewer escalations |
+| An unprompted payment is never claimed as ours | [webhooks/attribution.py](reclaim/webhooks/attribution.py) | `test_an_unprompted_payment_is_not_credited_to_an_intervention` | ₹25,90,748 arrived without us |
 
 `cli verify` re-checks 25 of these structurally on every run, and `pytest` runs
 342 tests. Both are one command, below.
@@ -42,7 +43,7 @@ The most common question about a hackathon number, answered before it is asked.
 
 | Real | Modelled |
 |---|---|
-| Razorpay orders, payment links and error codes — live test-mode API | **Whether a given customer pays.** Per-cause probabilities in [outcomes.py](reclaim/synthetic/outcomes.py) |
+| Razorpay orders, payment links and error codes — live test-mode API | **Whether a given customer pays**, and **whether they would have paid anyway.** Both in [outcomes.py](reclaim/synthetic/outcomes.py) |
 | Error strings checked against Razorpay's published list — which caught 16 map keys and 3 generator strings Razorpay never emits | Which customer is opted out, on DND, or has a payment history |
 | Webhook HMAC-SHA256 over raw bytes, forgery and replay both refused | The timing of an inbound reply |
 | The attribution walk from a paid link back to the intervention that minted it | |
@@ -55,10 +56,12 @@ Three limitations we would rather state than be asked about:
    estimates*, not measured rates. They are published so they can be argued with.
    This also means the recovery-rate-by-cause chart partly reflects numbers we
    chose.
-2. **The outcome simulator has no self-cure path** — a record nobody acts on
-   never recovers. Real customers sometimes pay unprompted, so our
-   *written-off* bucket is overstated and the ablation's money figure is an
-   upper bound. See [docs/RESULTS.md](docs/RESULTS.md).
+2. **Self-cure is modelled, and its rates are the least defensible numbers
+   here.** 34 of 180 customers pay unprompted in this world, drawn per cause
+   from `SELF_CURE` in [outcomes.py](reclaim/synthetic/outcomes.py). The
+   *ordering* is arguable — an outage clears itself, a dead card does not — but
+   the magnitudes are guesses, and the incremental figures move directly with
+   them. Nothing measured them.
 3. **Layer 2 gets one wrong that matters.** Of three `RISK_DECLINE` records it
    correctly refuses two and reads the third as `INSUFFICIENT_FUNDS` at high
    confidence. It is in the audit trail and it is the honest answer to "what
@@ -188,10 +191,12 @@ easy to quietly not publish the result.
 
 | | Naive | ReclaimAI |
 |---|---:|---:|
-| Recovered | ₹47,58,234 | ₹27,44,651 |
-| Recovery rate (records) | 45.0% | 38.3% |
-| Customer contacts | 418 | **169** |
-| Contacts per recovery | 5.16 | **2.45** |
+| Recovered (headline) | ₹47,58,234 | ₹21,36,072 |
+| **Incremental — net of customers who would have paid anyway** | **₹27,50,189** | **₹19,02,912** |
+| Self-cures claimed as its own | 21 records | 10 records |
+| Recovery rate (records) | 45.0% | 35.0% |
+| Customer contacts | 418 | **158** |
+| Contacts per recovery | 5.16 | **2.51** |
 | Contacts to opted-out customers | 44 | **0** |
 | Contacts to customers on DND | 66 | **0** |
 | Contacts inside quiet hours | 330 | **0** |
@@ -207,17 +212,31 @@ what each chose to do, when, and to whom.
 So `cli baseline` itemises every rupee of the gap:
 
 ```
-₹23,52,777 the naive run collects and we do not:
+₹15,19,149 the naive run collects and we do not:
    11  ₹12,33,478   customer opted out or on DND - contact refused
-    7  ₹11,05,485   above the value ceiling - routed to a human
+    4   ₹2,71,857   above the value ceiling - routed to a human
     2     ₹12,104   still in flight - deferred, not abandoned
     3      ₹1,710   our strategy simply did worse here
 
-₹23,38,963 of that is money the agent was told not to take.
+₹15,05,335 of that is money the agent was told not to take.
 ```
 
 Of the whole gap, **₹1,710 across 3 records is the only part where our strategy
 was simply worse.** Everything else is a rule doing what it was written to do.
+
+### Most of the naive lead is other people's money
+
+34 of the 180 customers would have paid with no prompting at all — a fact the
+simulator now models, because a world where nobody ever pays unless chased is a
+world that flatters any agent that chases. Both strategies are handed the same
+34, drawn from the planted cause on a dedicated stream, so neither is measured
+against a world the other did not get.
+
+A strategy that contacts everybody absorbs more of them. The naive run banked
+**21** self-cures and counts every one as a recovery it caused; we banked 10. Net
+of both, the honest comparison is **₹27,50,189 against ₹19,02,912** — the gap
+falls from ₹26.2L to ₹8.5L, and **roughly two thirds of the naive strategy's
+apparent advantage turns out to be money that was arriving anyway.**
 
 The naive run is not a better strategy; it is an undeployable one. Publishing a
 comparison we lose on is only defensible because every rupee of the difference has

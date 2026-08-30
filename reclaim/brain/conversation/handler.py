@@ -257,14 +257,21 @@ def _to_human(record: AtRiskRecord, reason: str, at: datetime) -> None:
     """One open row per record, as everywhere else. A queue that grows by a row
     per tick is a queue nobody works."""
     with SessionLocal() as session:
+        row = session.get(AtRiskRecordRow, record.id)
+        # A reply can land after the money already has — the invoice was paid,
+        # or a stopping rule closed the record, between the contact going out
+        # and the answer coming back. Reading the reply is still worth doing;
+        # putting a settled record on somebody's desk is not.
+        if row is not None and RecordState(row.state).is_terminal:
+            return
+
         existing = (session.query(HumanQueueRow)
                     .filter(HumanQueueRow.record_id == record.id)
                     .filter(HumanQueueRow.resolved_at.is_(None)).first())
         if existing is None:
             session.add(HumanQueueRow(record_id=record.id, reason=reason,
                                       amount=record.amount, raised_at=at))
-        row = session.get(AtRiskRecordRow, record.id)
-        if row is not None and not RecordState(row.state).is_terminal:
+        if row is not None:
             row.state = RecordState.ESCALATED.value
             row.next_action_at = None
         session.commit()

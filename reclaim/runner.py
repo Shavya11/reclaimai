@@ -285,7 +285,8 @@ def run_batch(
     result.promises_kept, result.promises_broken = len(kept), len(broken)
 
     if settle:
-        result.settlement = settle_batch(batch.truth, seed=seed)
+        result.settlement = settle_batch(batch.truth, seed=seed,
+                                         self_cure=batch.self_cure)
 
         # Reading the replies is the last thing a tick does. It has to come
         # after settlement, because a reply is a response to a contact that has
@@ -379,6 +380,12 @@ def _queue_for_human(action, verdict) -> None:
     reason = (verdict.violations[0].reason if verdict.violations
               else action.rationale)
     with SessionLocal() as session:
+        record = session.get(AtRiskRecordRow, action.record_id)
+        # Same rule as the reply path: a record that settled between the action
+        # being proposed and this running is nobody's to work.
+        if record is not None and RecordState(record.state).is_terminal:
+            return
+
         existing = (session.query(HumanQueueRow)
                     .filter(HumanQueueRow.record_id == action.record_id)
                     .filter(HumanQueueRow.resolved_at.is_(None))
@@ -389,7 +396,6 @@ def _queue_for_human(action, verdict) -> None:
         # Handing a record to a person ends the agent's claim on it. Without
         # this the agent proposes the same escalation on every tick and gets
         # refused every time, which is noise, not restraint.
-        record = session.get(AtRiskRecordRow, action.record_id)
         if record is not None and record.state in _OWNED_VALUES:
             record.state = RecordState.ESCALATED.value
             record.next_action_at = None

@@ -93,6 +93,12 @@ class Scoreboard:
     escalations: int = 0
     escalations_open: int = 0
     escalations_resolved: int = 0
+    # Money that arrived while we were watching, that we did not cause. Kept
+    # out of `recovered_paise` on purpose: the headline figure is what the
+    # agent recovered, and a customer who would have paid anyway is not a
+    # recovery, it is a coincidence we happened to observe.
+    organic_paise: int = 0
+    organic_records: int = 0
     interventions: int = 0
     contacts: int = 0
     silent_retries: int = 0
@@ -145,8 +151,14 @@ class Scoreboard:
     @property
     def balances(self) -> bool:
         """Every rupee is in exactly one bucket. A scoreboard that does not add
-        up is one where a rupee got counted twice."""
-        return (self.recovered_paise + self.open_paise
+        up is one where a rupee got counted twice.
+
+        `organic` is its own bucket rather than part of `recovered`, and that
+        separation is the point: the money arrived, so it is neither open nor
+        written off, but the agent did not cause it, so it is not recovery
+        either.
+        """
+        return (self.recovered_paise + self.organic_paise + self.open_paise
                 + self.unrecoverable_paise) == self.at_risk_paise
 
     def as_dict(self) -> dict[str, Any]:
@@ -175,6 +187,9 @@ class Scoreboard:
             "escalations": self.escalations,
             "escalations_open": self.escalations_open,
             "escalations_resolved": self.escalations_resolved,
+            "organic_paise": self.organic_paise,
+            "organic_records": self.organic_records,
+            "organic_display": format_inr(self.organic_paise),
             "interventions": self.interventions,
             "contacts": self.contacts,
             "silent_retries": self.silent_retries,
@@ -298,7 +313,13 @@ def compute(label: str = "ReclaimAI") -> Scoreboard:
         line.contacts += contacts_by_record.get(row.id, 0)
 
         recovered = recovered_by_record.get(row.id, 0)
-        if row.state == RecordState.RECOVERED.value and recovered:
+        if row.state == RecordState.RECOVERED.value and not recovered:
+            # Recovered, and none of it ours. Its own bucket, so it neither
+            # inflates what the agent achieved nor gets written off as money
+            # that never came back.
+            board.organic_records += 1
+            board.organic_paise += row.amount
+        elif row.state == RecordState.RECOVERED.value and recovered:
             board.recovered_records += 1
             board.recovered_paise += recovered
             line.recovered_records += 1

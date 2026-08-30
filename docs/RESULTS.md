@@ -49,11 +49,23 @@ the deterministic map improves.
 
 | | layer 2 on | off | delta | 95% CI (per record) |
 |---|---:|---:|---:|---|
-| Recovered | ₹12,74,886 | ₹0 | **+₹12,74,886** | [+₹6,836, +₹32,737] |
-| Records recovered | 23 | 0 | **+23** | [+0.23, +0.45] |
-| Human escalations | 18 | 69 | **−51** | [−0.84, −0.64] |
-| Contacts sent | 63 | 0 | +63 | [+0.74, +1.09] |
+| **Money arrived** | ₹21,02,354 | ₹15,09,930 | **+₹5,92,424** | [+₹2,378, +₹16,480] |
+| — of which ours | ₹7,44,019 | ₹0 | +₹7,44,019 | [+₹3,997, +₹18,940] |
+| — arrived anyway | ₹13,58,335 | ₹15,09,930 | **−₹1,51,595** | [−₹5,987, −₹3] |
+| Records recovered | 32 | 16 | **+16** | [+0.13, +0.35] |
+| Human escalations | 15 | 53 | **−38** | [−0.67, −0.43] |
+| Contacts sent | 58 | 0 | +58 | [+0.65, +1.01] |
 | Harmful actions | 0 | — | — | — |
+
+**Read the third row before the second.** Layer 2 recovers ₹7,44,019 that the
+fallback recovers none of — but ₹1,51,595 of that was going to arrive without
+anyone doing anything, and the agent got there first. Netting the two is the
+only figure worth quoting: **+₹5,92,424**, which is less than half what the same
+experiment reported before self-cure existed.
+
+That correction is the entire reason for building the baseline. The earlier
+version of this file said the money delta was an upper bound; it was, by about
+2×.
 
 **Cost: 38 API calls.** Layer 2 was consulted 412 times across the arc and made
 38 requests, because the signature cache keys on what actually changes an answer
@@ -65,19 +77,21 @@ Every interval excludes zero. They are bootstrap intervals over **paired**
 resamples — both arms saw the same record, so treating the two decisions as
 independent would report a tighter interval than the data earns.
 
-**Headline:** on the 69 records it answers, layer 2 recovers ₹12.7L that the
-fallback recovers none of, takes 51 records off a person's desk, and costs 63
+**Headline:** on the 69 records it answers, layer 2 adds ₹5,92,424 net of what
+would have arrived anyway, takes 38 records off a person's desk, and costs 58
 customer contacts and 38 API calls to do it.
 
 ### The escalation number is the one to quote
 
-With layer 2 off, all 69 records land in the human queue: no diagnosis means
-`UNKNOWN`, which means `no_auto_action`, which means a person. **69 items is not
-a queue, it is a backlog nobody works** — the same failure PLAN.md already
-recorded when a mis-set value ceiling sent 48 of 60 invoices to a human.
+With layer 2 off, 53 of the 69 land in the human queue: no diagnosis means
+`UNKNOWN`, which means `no_auto_action`, which means a person. (The other 16 pay
+unprompted and close themselves.) **53 items is not a queue, it is a backlog
+nobody works** — the same failure PLAN.md already recorded when a mis-set value
+ceiling sent 48 of 60 invoices to a human.
 
-With layer 2 on, 18 remain. That is a morning's work rather than a hiring
-decision, and unlike the money figure it is **counted rather than modelled**.
+With layer 2 on, 15 remain. That is a morning's work rather than a hiring
+decision, and unlike the money figure it is **counted rather than modelled** —
+no self-cure assumption touches it.
 
 ### The cost side
 
@@ -95,31 +109,73 @@ action actually fired**. On this seed there were none.
 
 ## What this does not show
 
-1. **The money delta is an upper bound.** The outcome simulator recovers a
-   record only when an intervention fires, so the "off" arm scores exactly ₹0 on
-   this population *by construction*. Real customers sometimes pay unprompted. A
-   self-cure baseline — `recoup` reports organic recoveries of 46 vs 45 across
-   arms and calls that balance what makes their comparison sound — is what would
-   separate "the agent recovered this" from "this was arriving anyway". **We do
-   not have one.** The escalation delta does not have this problem.
+1. **The self-cure rates are the least defensible numbers here.** 34 of 180
+   customers pay unprompted in this world, drawn per cause from `SELF_CURE` in
+   `reclaim/synthetic/outcomes.py`. The *ordering* is arguable — an outage
+   clears itself and the customer simply tries again, a dead card does not — but
+   the magnitudes are estimates, and every figure above moves directly with
+   them. Raise them and layer 2 looks worse; lower them and it looks better.
+   Nothing here measured them.
 
-2. **The priors are stated estimates, not measured rates.** Per-cause recovery
-   probabilities live in `reclaim/synthetic/outcomes.py`, published so they can
-   be argued with. They are not calibrated against any real merchant.
+2. **The recovery priors are stated estimates too**, published in the same file
+   so they can be argued with, and not calibrated against any real merchant.
 
 3. **The run is reproducible only up to the model's own variance.** The seed
-   fixes the batch, the rules and the arc; it does not fix the model. Two runs
-   of this configuration gave identical recovered rupees (₹12,74,886), identical
-   recovered records (23) and identical contacts (63), but escalations moved by
-   one — 19 and then 18 — because a single borderline record was labelled
-   differently the second time. The deterministic arm is exactly reproducible;
-   the arm with the model is not, and quoting a single run as though it were
-   would be overclaiming. Figures here are from the second run.
+   fixes the batch, the self-cure draw, the rules and the arc; it does not fix
+   the model. Repeat runs agree on the money and the record counts and have
+   moved escalations by one, because a single borderline record was labelled
+   differently. The arm without the model is exactly reproducible; the arm with
+   it is not, and quoting one run as though it were would be overclaiming.
 
 4. **One model, one prompt, one seed.** The claim is about this configuration.
 
 5. **Ground truth is known by construction**, because the batch is synthetic.
    That is what makes the harmful-action check possible and also what limits it.
+
+---
+
+## The self-cure baseline
+
+A large share of failed payments recover with no intervention at all. A
+simulator that does not model that asserts the opposite — that nobody ever pays
+unless chased — and every agent measured inside it wins by construction.
+
+34 of the 180 customers pay unprompted here, drawn per cause from `SELF_CURE`
+and dated within 30 days of detection. Three properties make it usable:
+
+- **Keyed on the planted cause, never on a diagnosis.** Whether somebody pays is
+  a fact about them; what we decided their error code meant cannot change it.
+  That is what makes the draw identical in every arm.
+- **Its own random stream, drawn last.** `Random(seed + 2)`, after every other
+  draw, and stored on the batch rather than on a record — so the reproducibility
+  digest and every published figure are untouched by it.
+- **Nobody who cannot pay pays anyway.** A card the issuer blocked will be
+  blocked again; a revoked mandate has nothing left to debit. Those causes are
+  rated zero and `cli verify` asserts none of them ever self-cures.
+
+**An unprompted payment is never credited to us.** This turned out to be the
+hard part. Our executor writes `notes.record_id` on everything it mints, so a
+note is proof the money came through us — and the first version of this forged
+that note on organic payments, which meant attribution adopted them and the
+agent was credited with 23 recoveries it had not caused. An unprompted payment
+now arrives against the merchant's *original* order reference and carries no
+note of ours, so nothing can claim it. It is recorded as `ORGANIC`: the money
+arrived, and none of it is the agent's.
+
+### What it changed
+
+| | before | after |
+|---|---:|---:|
+| Written off as unrecoverable | ₹14,06,868 | ₹13,70,992 |
+| Arrived without us | not modelled | ₹25,90,748 |
+| Naive baseline, headline | ₹47,58,234 | ₹47,58,234 |
+| Naive baseline, **incremental** | not computable | **₹27,50,189** |
+| Ours, **incremental** | not computable | **₹19,02,912** |
+
+The naive strategy contacts everybody, so it absorbs more self-cures and claims
+them: 21 of its recoveries would have arrived anyway, against 10 of ours. Net of
+that, **roughly two thirds of its apparent lead is money that was coming
+regardless.**
 
 ---
 

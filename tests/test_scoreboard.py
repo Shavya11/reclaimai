@@ -41,17 +41,20 @@ def _arc():
 
 
 def test_every_rupee_lands_in_exactly_one_bucket():
+    """Four buckets, not three. `organic` is money that arrived without us: not
+    open, not written off, and not ours to call a recovery."""
     run_batch(dry_run=True)
     board = compute()
     assert board.balances
-    assert (board.recovered_paise + board.open_paise
+    assert (board.recovered_paise + board.organic_paise + board.open_paise
             + board.unrecoverable_paise) == board.at_risk_paise
 
 
 def test_every_record_lands_in_exactly_one_bucket():
     run_batch(dry_run=True)
     board = compute()
-    assert (board.recovered_records + board.open_records
+    assert (board.recovered_records + board.organic_records
+            + board.open_records
             + board.unrecoverable_records) == board.records
 
 

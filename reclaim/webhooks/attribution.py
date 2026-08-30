@@ -55,12 +55,19 @@ IGNORED = "IGNORED"
 MALFORMED = "MALFORMED"
 
 RESULT_RECOVERED = "RECOVERED"
+# The customer paid and nothing we did caused it. A separate outcome from
+# UNATTRIBUTED, which means we could not even tell whose money it was: here we
+# know exactly whose it is and know it is not ours to claim.
+ORGANIC = "ORGANIC"
 RESULT_FAILED_AGAIN = "FAILED_AGAIN"
 RESULT_NO_RESPONSE = "NO_RESPONSE"
 
 # Audit rows for events that belong to no record still need a record_id. A
 # sentinel keeps them queryable instead of dropping them on the floor.
 ORPHAN = "UNATTRIBUTED"
+
+_TERMINAL = {RecordState.RECOVERED.value, RecordState.CLOSED.value,
+             RecordState.UNRECOVERABLE.value}
 
 
 @dataclass
@@ -136,6 +143,27 @@ def _find_intervention(session, event: WebhookEvent) -> InterventionRow | None:
     return None
 
 
+def _record_for_unprompted(session, event: WebhookEvent) -> AtRiskRecordRow | None:
+    """The record a payment belongs to when nothing of ours minted it.
+
+    Matched on `source_ref` — the order the MERCHANT already had — and never on
+    `notes.record_id`, because our executor writes that note on everything it
+    creates. A note is therefore proof the payment came through us, and reading
+    one here would let an unprompted payment claim to be a recovery.
+
+    So the only way in is a reference we never controlled, which is exactly what
+    a customer paying the original invoice produces.
+    """
+    if not event.succeeded:
+        return None
+    for ref in event.refs:
+        found = (session.query(AtRiskRecordRow)
+                 .filter(AtRiskRecordRow.source_ref == ref).first())
+        if found is not None:
+            return found
+    return None
+
+
 def handle(
     body: dict[str, Any],
     *,
@@ -167,6 +195,37 @@ def handle(
         intervention = _find_intervention(session, event)
 
         if intervention is None:
+            # A payment we can identify but did not cause. The customer would
+            # have paid anyway, and the honest treatment is to record that the
+            # money arrived while crediting the agent with nothing — the
+            # difference between "we recovered this" and "this was going to
+            # arrive". Counting it as a recovery is how a scoreboard starts
+            # claiming other people's work.
+            organic = _record_for_unprompted(session, event)
+            if organic is not None and organic.state not in _TERMINAL:
+                organic.state = RecordState.RECOVERED.value
+                organic.next_action_at = None
+                closed = human_queue.resolve(organic.id, session=session)
+                session.commit()
+
+                reason = (f"{event.event_type} for {organic.id} matched no "
+                          f"intervention of ours. The customer paid unprompted; "
+                          f"the money arrived and none of it is attributable to "
+                          f"the agent."
+                          + (f" Closed {closed} open human-queue row"
+                             f"{'s' if closed != 1 else ''}." if closed else ""))
+                audit.log(organic.id, Stage.OUTCOME, ORGANIC, reason,
+                          payload={"event_id": event.event_id,
+                                   "event_type": event.event_type,
+                                   "amount_paise": event.amount,
+                                   "attributed_paise": 0,
+                                   "simulated": simulated})
+                _settle_event_row(event.event_id, ORGANIC, organic.id)
+                return Attribution(outcome=ORGANIC, event_id=event.event_id,
+                                   event_type=event.event_type,
+                                   record_id=organic.id, amount=0,
+                                   reason=reason)
+
             reason = (f"{event.event_type} matched no intervention "
                       f"(refs={list(event.refs) or 'none'}).")
             audit.log(ORPHAN, Stage.OUTCOME, UNATTRIBUTED, reason,

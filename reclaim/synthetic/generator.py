@@ -7,12 +7,13 @@ reads as fabricated, however good the code is.
 
 import random
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from ..enums import LeakType, RecordState, RootCause
 from ..models import AtRiskRecord
 from ..timeutil import IST, now
 from . import error_codes as ec
+from .outcomes import SELF_CURE, SELF_CURE_WINDOW_DAYS
 
 
 def batch_epoch(at=None):
@@ -152,6 +153,12 @@ class Batch:
     # Held on the batch rather than on the record because a reply is something
     # that arrives later — settlement delivers it, the record does not own it.
     replies: dict[str, str] = field(default_factory=dict)
+    # record_id -> when this customer would have paid with no prompting at all.
+    # Absent means never. Held here rather than on the record for the same
+    # reason `truth` is: it is a hidden fact about the world that the agent
+    # cannot see, and putting it on the record would both leak it into
+    # diagnosis and change the reproducibility digest.
+    self_cure: dict[str, datetime] = field(default_factory=dict)
 
     @property
     def total_at_risk(self) -> int:
@@ -461,9 +468,41 @@ def generate(seed: int = 42, n: int = 120, at=None,
         owners = {r.counterparty_id for r in records}
         customers = [c for c in customers if c.id in owners]
 
+    # A THIRD stream, drawn after everything else and keyed per record, for the
+    # reason the comment above gives: `rng` and `inv_rng` are both spent, and
+    # advancing either would move records that published numbers depend on.
+    # Nothing here touches a record, so the digest cannot move.
+    self_cure = _draw_self_cure(random.Random(seed + 2), records, truth)
+
     return Batch(records=records, customers=customers, truth=truth,
                  traffic=_traffic(records, truth),
-                 outage_ids=frozenset(outage_ids))
+                 outage_ids=frozenset(outage_ids),
+                 self_cure=self_cure)
+
+
+def _draw_self_cure(rng, records, truth) -> dict[str, datetime]:
+    """When each customer would have paid unprompted, if they ever would.
+
+    Keyed on the planted cause, never on a diagnosis — whether somebody pays is
+    a fact about them, not about what we decided their error code meant. That is
+    also what makes the draw identical under every strategy, which is the only
+    reason a comparison against one is worth anything.
+
+    Iterated in record order over a dedicated stream, so adding a strategy or
+    changing a policy cannot shift who self-cures.
+    """
+    out: dict[str, datetime] = {}
+    for record in records:
+        cause = truth.get(record.id)
+        rate = SELF_CURE.get(cause, 0.0) if cause else 0.0
+        # Both draws happen either way. Drawing only when the coin lands would
+        # make the stream depend on the rates, so tuning one cause would
+        # silently reshuffle the timing of every record after it.
+        cures = rng.random() < rate
+        after = rng.uniform(1.0, SELF_CURE_WINDOW_DAYS)
+        if cures:
+            out[record.id] = record.detected_at + timedelta(days=after)
+    return out
 
 
 def _assign_buyer_flags(buyers, records, rng) -> None:

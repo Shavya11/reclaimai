@@ -33,6 +33,7 @@ from .enums import ActionType, RootCause
 from .synthetic import razorpay_payloads as payloads
 from .synthetic import replies as reply_fixture
 from .synthetic.outcomes import probability
+from .timeutil import to_ist
 from .webhooks import receive, sign
 from .webhooks.attribution import RESULT_RECOVERED, mark_no_response
 
@@ -53,6 +54,11 @@ class SettlementResult:
     failed_again: int = 0
     unattributed: int = 0
     duplicates: int = 0
+    # Customers who paid with no prompting from us. Counted apart from
+    # `recovered` throughout, because folding the two together is precisely the
+    # claim this figure exists to stop us making.
+    organic: int = 0
+    organic_paise: int = 0
     events: list[dict[str, Any]] = field(default_factory=list)
     # Replies raised by this settlement, record_id -> text. Handed back rather
     # than handled here: settlement's job ends at "they did not pay, and they
@@ -64,6 +70,8 @@ class SettlementResult:
         return {
             "pending": self.pending,
             "recovered": self.recovered,
+            "organic": self.organic,
+            "organic_paise": self.organic_paise,
             "recovered_paise": self.recovered_paise,
             "no_response": self.no_response,
             "failed_again": self.failed_again,
@@ -106,6 +114,7 @@ def settle(
     *,
     seed: int = 42,
     secret: str | None = None,
+    self_cure: dict[str, Any] | None = None,
 ) -> SettlementResult:
     """Decide each pending intervention's fate and deliver the corresponding
     webhook. Safe to run repeatedly: settled interventions are skipped, and a
@@ -205,7 +214,50 @@ def settle(
             else:
                 result.failed_again += 1
 
+    _settle_self_cures(self_cure or {}, result, secret=secret)
     return result
+
+
+def _settle_self_cures(self_cure, result: SettlementResult, *, secret) -> None:
+    """Customers who were always going to pay, paying.
+
+    Delivered as a real `payment.captured` through the same signed path as
+    everything else, so it arrives with no intervention to attribute to and is
+    recorded as ORGANIC — the money landed, and none of it is the agent's.
+
+    Without this the simulator asserts that a record nobody touches never
+    recovers, which is false and which flatters the agent twice: every record it
+    correctly declines to chase reads as a total loss, and any comparison
+    against a strategy that acts less wins by construction.
+
+    Records already settled are skipped, so a customer who paid because we asked
+    is never also counted as having paid anyway.
+    """
+    if not self_cure:
+        return
+
+    from .db import AtRiskRecordRow
+    from .enums import RecordState
+
+    terminal = {RecordState.RECOVERED.value, RecordState.CLOSED.value,
+                RecordState.UNRECOVERABLE.value}
+    at = _now()
+
+    with SessionLocal() as session:
+        due = [(r.id, r.amount, r.source_ref) for r in session.query(AtRiskRecordRow)
+               .filter(AtRiskRecordRow.id.in_(list(self_cure)))
+               .filter(AtRiskRecordRow.state.notin_(terminal)).all()
+               if to_ist(self_cure[r.id]) <= at]
+
+    for rid, amount, source_ref in due:
+        body = payloads.payment_captured_unprompted(
+            payment_id=f"pay_organic_{rid.lower()}", amount=amount,
+            order_id=source_ref)
+        reception = _deliver(body, event_id=f"evt_organic_{rid}", secret=secret)
+        result.events.append(reception.as_dict())
+        if reception.outcome == "ORGANIC":
+            result.organic += 1
+            result.organic_paise += amount
 
 
 def recovered_total() -> int:

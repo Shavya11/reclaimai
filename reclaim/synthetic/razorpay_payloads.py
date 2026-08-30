@@ -89,6 +89,35 @@ def payment_captured(
     )
 
 
+def payment_captured_unprompted(
+    *, payment_id: str, amount: int, order_id: str,
+    created_at: int | None = None,
+) -> dict[str, Any]:
+    """A customer paying on their own, against the merchant's original order.
+
+    Deliberately carries NO `notes.record_id`. Our executor writes that note on
+    every link and order it mints, so the note is the marker that says "this is
+    ours" — forging it on a payment we did not cause would make an unprompted
+    payment indistinguishable from a recovery, which is the exact confusion the
+    self-cure baseline exists to prevent.
+
+    What it carries instead is the order id the merchant already had. That is
+    genuinely how this arrives: the customer pays the original invoice, not the
+    link we sent, and the only thing tying it to a record is a reference we
+    never controlled.
+    """
+    return _envelope(
+        "payment.captured", ["payment"],
+        {"payment": {"entity": {
+            "id": payment_id, "entity": "payment", "status": "captured",
+            "amount": amount, "currency": "INR", "method": "upi",
+            "order_id": order_id, "captured": True,
+            "notes": {},
+        }}},
+        created_at,
+    )
+
+
 def subscription_charged(
     *, subscription_id: str, payment_id: str, amount: int, record_id: str,
     created_at: int | None = None,

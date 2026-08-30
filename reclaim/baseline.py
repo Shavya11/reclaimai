@@ -26,6 +26,7 @@ from .enums import ActionType, RootCause
 from .money import format_inr
 from .synthetic import generate
 from .synthetic.outcomes import probability
+from .webhooks.attribution import RESULT_RECOVERED
 from .timeutil import is_quiet_hours
 
 # "Retry everything 3x immediately, message every failure." Straight from
@@ -40,6 +41,11 @@ class BaselineResult:
     at_risk_paise: int = 0
     recovered_paise: int = 0
     recovered_records: int = 0
+    # Customers who would have paid with or without the naive run. Counted the
+    # same way and from the same draw as ours, because a baseline that gets
+    # credited for self-cure while we are not is not a baseline.
+    organic_paise: int = 0
+    organic_records: int = 0
     contacts: int = 0
     contacts_to_opted_out: int = 0
     contacts_in_quiet_hours: int = 0
@@ -73,6 +79,9 @@ class BaselineResult:
             "records": self.records,
             "at_risk_paise": self.at_risk_paise,
             "recovered_paise": self.recovered_paise,
+            "organic_paise": self.organic_paise,
+            "organic_records": self.organic_records,
+            "organic_display": format_inr(self.organic_paise),
             "at_risk_display": format_inr(self.at_risk_paise),
             "recovered_display": format_inr(self.recovered_paise),
             "records_recovered": self.recovered_records,
@@ -140,6 +149,15 @@ def run(seed: int = 42) -> BaselineResult:
                 result.recovered_paise += record.amount
                 line["recovered"] += 1
                 break
+        else:
+            # Three attempts spent and nothing came of them. If this customer
+            # was going to pay anyway, the money still arrives — and it is no
+            # more the naive run's doing than it is ours. Read from the same
+            # `batch.self_cure` draw, so neither strategy can be credited with
+            # a recovery the other is denied.
+            if record.id in batch.self_cure:
+                result.organic_records += 1
+                result.organic_paise += record.amount
 
     result.customers_over_frequency_cap = sum(
         max(0, n - FREQUENCY_CAP) for n in per_customer_contacts.values())
@@ -271,6 +289,7 @@ class Comparison:
     baseline: BaselineResult
     ours: Any  # scoreboard.Scoreboard
     gap: dict[str, Any] = field(default_factory=dict)
+    incremental: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         b, o = self.baseline, self.ours
@@ -278,6 +297,7 @@ class Comparison:
             "baseline": b.as_dict(),
             "ours": o.as_dict(),
             "gap": self.gap,
+            "incremental": self.incremental,
             "delta": {
                 "recovery_rate_pp": round(
                     (o.recovery_rate - b.recovery_rate) * 100, 2),
@@ -296,4 +316,54 @@ def compare(seed: int = 42) -> Comparison:
     from .scoreboard import compute
 
     return Comparison(baseline=run(seed=seed), ours=compute(),
-                      gap=gap_analysis(seed=seed))
+                      gap=gap_analysis(seed=seed),
+                      incremental=incremental(seed=seed))
+
+
+def incremental(seed: int = 42) -> dict[str, Any]:
+    """What each strategy is worth over doing nothing at all.
+
+    Both headline figures overstate their strategy, and in the same way. A
+    record recovered on day one from a customer who would have paid on day
+    twenty is money that was always going to arrive; the strategy changed when
+    it landed, not whether. Counting it as recovery credits the strategy with
+    the customer's own intention.
+
+    So the honest figure for either arm is what it collected from customers who
+    would NOT have paid on their own — and this matters most for the naive run,
+    which recovers more records and therefore absorbs more self-cures into its
+    total. Its lead over us is smaller than its headline, and part of what looks
+    like a lead is other people's money.
+
+    Read from `batch.self_cure`, the same draw both arms settle against, so
+    neither is measured against a world the other did not get.
+    """
+    from .db import InterventionRow, SessionLocal
+    from .enums import RecordState
+
+    batch = generate(seed=seed)
+    would_pay_anyway = set(batch.self_cure)
+    amounts = {r.id: r.amount for r in batch.records}
+
+    naive_got = {rid for rid, got in _per_record(seed=seed).items() if got}
+    naive_incremental = sum(amounts.get(r, 0)
+                            for r in naive_got - would_pay_anyway)
+
+    with SessionLocal() as session:
+        ours_got = {
+            row.record_id for row in session.query(InterventionRow)
+            .filter(InterventionRow.result == RESULT_RECOVERED).all()}
+    ours_incremental = sum(amounts.get(r, 0)
+                           for r in ours_got - would_pay_anyway)
+
+    return {
+        "naive_recovered_paise": sum(amounts.get(r, 0) for r in naive_got),
+        "naive_incremental_paise": naive_incremental,
+        "naive_incremental_display": format_inr(naive_incremental),
+        "naive_self_cures_claimed": len(naive_got & would_pay_anyway),
+        "ours_recovered_paise": sum(amounts.get(r, 0) for r in ours_got),
+        "ours_incremental_paise": ours_incremental,
+        "ours_incremental_display": format_inr(ours_incremental),
+        "ours_self_cures_claimed": len(ours_got & would_pay_anyway),
+        "would_pay_anyway": len(would_pay_anyway),
+    }

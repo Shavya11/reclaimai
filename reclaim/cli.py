@@ -744,7 +744,9 @@ def cmd_ablation(args) -> int:
           f"{DIM}unanswered{OFF} {data['layer2_failure_rate']:.1%}\n")
 
     rows = [
-        ("Recovered", "recovered_paise", True),
+        ("Money arrived", "money_arrived_paise", True),
+        ("  of which ours", "recovered_paise", True),
+        ("  arrived anyway", "organic_paise", True),
         ("Records recovered", "recovered_records", False),
         ("Human escalations", "human_escalations", False),
         ("Contacts sent", "contacts", False),
@@ -780,10 +782,11 @@ def cmd_ablation(args) -> int:
               f"the truth says must not be chased.{OFF}")
     print()
     print(f"  {BOLD}{data['headline']}{OFF}")
-    print(f"  {DIM}The money delta is an upper bound: the simulator recovers a "
-          f"record only when an\n  intervention fires, so the 'off' arm cannot "
-          f"self-cure. The escalation delta is counted,\n  not modelled. See "
-          f"docs/RESULTS.md.{OFF}\n")
+    print(f"  {DIM}Both arms are handed the same self-curing customers, so "
+          f"'money arrived' is what\n  layer 2 added rather than what it looks "
+          f"like against a world where nobody pays\n  unaided. Part of what it "
+          f"recovers would have come anyway — that is the negative\n  'arrived "
+          f"anyway' line. See docs/RESULTS.md.{OFF}\n")
     return 0
 
 

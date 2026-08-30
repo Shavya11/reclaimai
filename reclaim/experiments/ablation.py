@@ -36,13 +36,13 @@ the card-testing pattern that gets merchants fined. Sending a record to a human
 is safe; sending one down that path is not. A report that counted only rescues
 would be an advertisement.
 
-**What this cannot show.** The outcome simulator recovers a record only when an
-intervention fires, so the arm with layer 2 off recovers exactly ₹0 on this
-population — by construction, not by measurement. Real customers pay unprompted
-sometimes, and a self-cure baseline is what would separate "the agent recovered
-this" from "this was going to arrive anyway". We do not have one, so the money
-delta below is an UPPER BOUND on layer 2's contribution. The escalation delta
-does not have this problem: those rows are counted, not modelled.
+**Both arms are handed the same self-curing customers.** Some people pay with no
+prompting at all, and the simulator draws who from the planted cause on its own
+stream — so the arm with layer 2 off still recovers money, and the delta is what
+layer 2 added rather than what it looked like it added against a world where
+nobody ever pays unaided. `money_arrived` is the honest headline: attributed and
+organic together, which is what actually happened to the money. `recovered` is
+the narrower figure the agent may claim.
 """
 
 import logging
@@ -136,6 +136,21 @@ class RecordOutcome:
     @property
     def is_recovered(self) -> bool:
         return self.state == RecordState.RECOVERED.value
+
+    @property
+    def organic(self) -> int:
+        """Money that arrived on a record no intervention of ours can claim.
+
+        Recovered with nothing attributed means the customer paid unprompted.
+        Kept apart from `recovered` for the same reason the scoreboard keeps
+        them apart, and summed with it only where the question is what actually
+        happened to the money rather than who caused it.
+        """
+        return self.amount if (self.is_recovered and not self.recovered) else 0
+
+    @property
+    def money_arrived(self) -> int:
+        return self.recovered + self.organic
 
 
 @dataclass
@@ -412,7 +427,9 @@ class Ablation:
             "layer2_consulted": self.with_ai.calls,
             "layer2_api_calls": self.with_ai.api_calls,
             "layer2_failure_rate": round(self.with_ai.failure_rate, 4),
+            "money_arrived_paise": self.delta(lambda o: o.money_arrived),
             "recovered_paise": self.delta(lambda o: o.recovered),
+            "organic_paise": self.delta(lambda o: o.organic),
             "recovered_records": self.delta(lambda o: 1 if o.is_recovered else 0),
             "human_escalations": self.delta(lambda o: 1 if o.queued else 0),
             "contacts": self.delta(lambda o: o.contacts),
@@ -428,7 +445,7 @@ class Ablation:
         if self.void:
             return self.void_reason
 
-        money = self.delta(lambda o: o.recovered)["delta"]
+        money = self.delta(lambda o: o.money_arrived)["delta"]
         humans = self.delta(lambda o: 1 if o.queued else 0)["delta"]
         harm = len(self.harmful())
 
