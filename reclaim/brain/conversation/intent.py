@@ -26,7 +26,14 @@ from pydantic import ValidationError
 from ...config import settings
 from ...enums import ReplyIntent
 from ...models import ReplyReading
-from ..diagnosis.llm_diagnoser import MAX_TOKENS, CachedDiagnoser
+from ..diagnosis.llm_diagnoser import (
+    BATCH_INSTRUCTION,
+    MAX_TOKENS,
+    CachedDiagnoser,
+    batch_max_tokens,
+    batch_tool,
+    unpack_batch,
+)
 
 log = logging.getLogger(__name__)
 
@@ -132,6 +139,19 @@ def _validate(payload: dict) -> ReplyReading | None:
         return None
 
 
+BATCH_INTENT_TOOL: dict[str, Any] = batch_tool(INTENT_TOOL)
+
+
+def build_batch_context(calls) -> dict:
+    replies = []
+    for i, call in enumerate(calls):
+        reply = call[0]
+        today = call[1] if len(call) > 1 else None
+        record = call[2] if len(call) > 2 else None
+        replies.append({"index": i, **build_context(reply, today=today, record=record)})
+    return {"replies": replies}
+
+
 def build_context(reply: str, *, today, record=None) -> dict:
     ctx: dict[str, Any] = {"reply": reply, "today": today.strftime("%Y-%m-%d")}
     if record is not None:
@@ -182,6 +202,22 @@ class IntentExtractor(CachedDiagnoser):
                 return _validate(block.input)
         return None
 
+    def _ask_batch(self, calls):
+        self.calls += 1
+        response = self._client.messages.create(
+            model=self.model,
+            max_tokens=batch_max_tokens(len(calls)),
+            system=SYSTEM_PROMPT + BATCH_INSTRUCTION,
+            tools=[BATCH_INTENT_TOOL],
+            tool_choice={"type": "tool", "name": BATCH_INTENT_TOOL["name"]},
+            messages=[{"role": "user", "content": json.dumps(
+                build_batch_context(calls), indent=2)}],
+        )
+        for block in response.content:
+            if getattr(block, "type", None) == "tool_use":
+                return unpack_batch(block.input, len(calls), _validate)
+        return None
+
 
 class GeminiIntentExtractor(IntentExtractor):
     """Same prompt, same closed schema, same validation - different vendor.
@@ -230,6 +266,26 @@ class GeminiIntentExtractor(IntentExtractor):
         for call in response.function_calls or []:
             if call.name == INTENT_TOOL["name"]:
                 return _validate(dict(call.args or {}))
+        return None
+
+    def _ask_batch(self, calls):
+        """A tick's replies in one request. They pace through the same gate the
+        diagnoser does, so every one of them saved four seconds off the arc."""
+        from ..diagnosis.gemini_diagnoser import GeminiDiagnoser, _tool_config
+
+        self.calls += 1
+        config = _tool_config(BATCH_INTENT_TOOL, SYSTEM_PROMPT + BATCH_INSTRUCTION,
+                              batch_max_tokens(len(calls)))
+        if self._throttled:
+            GeminiDiagnoser._pace()
+        response = self._client.models.generate_content(
+            model=self.model,
+            contents=json.dumps(build_batch_context(calls), indent=2),
+            config=config,
+        )
+        for call in response.function_calls or []:
+            if call.name == BATCH_INTENT_TOOL["name"]:
+                return unpack_batch(dict(call.args or {}), len(calls), _validate)
         return None
 
 

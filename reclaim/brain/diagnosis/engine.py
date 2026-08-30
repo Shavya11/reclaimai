@@ -44,11 +44,10 @@ UNKNOWN_DIAGNOSIS = Diagnosis(
 )
 
 
-def diagnose_one(
-    record: AtRiskRecord,
-    signal: CohortSignal | None = None,
-    llm: LLMDiagnoser | None = None,
-) -> Diagnosis:
+def _before_llm(
+    record: AtRiskRecord, signal: CohortSignal | None
+) -> Diagnosis | None:
+    """Everything the first arrow can answer. None means 'layer 2's turn'."""
     # The cohort outranks the lookup only where the lookup would guess anyway:
     # a card that says "expired" is expired even during an outage.
     if signal is not None and signal.indicates_outage:
@@ -56,7 +55,15 @@ def diagnose_one(
             if diagnose_deterministic(record) is None:
                 return _from_cohort(signal)
 
-    found = diagnose_deterministic(record)
+    return diagnose_deterministic(record)
+
+
+def diagnose_one(
+    record: AtRiskRecord,
+    signal: CohortSignal | None = None,
+    llm: LLMDiagnoser | None = None,
+) -> Diagnosis:
+    found = _before_llm(record, signal)
     if found is not None:
         return found
 
@@ -76,6 +83,58 @@ def diagnose_batch(
     traffic: dict[str, int],
     llm: LLMDiagnoser | None = None,
 ) -> tuple[dict[str, Diagnosis], dict[str, CohortSignal]]:
+    """Layer 1 for everyone, then ONE trip to layer 2 for the survivors.
+
+    Asking the model record by record made the arc's runtime a function of how
+    many records layer 1 could not resolve, on a free tier that meters requests
+    per minute — about forty serialised calls, four minutes of a spinner, and a
+    rate limit with no margin left for the retries that then made it worse. The
+    survivors are unrelated cases, so nothing is lost by carrying ten of them in
+    one request; `many` keeps the per-record fallback for anything the batch
+    drops.
+    """
     signals = compute_cohort(records, traffic)
-    return ({r.id: diagnose_one(r, signals.get(r.id), llm) for r in records},
-            signals)
+
+    out: dict[str, Diagnosis] = {}
+    pending: list[AtRiskRecord] = []
+    for record in records:
+        found = _before_llm(record, signals.get(record.id))
+        if found is not None:
+            out[record.id] = found
+        else:
+            pending.append(record)
+
+    if pending and llm is not None:
+        answers = _ask_layer_2(pending, signals, llm)
+        for record, answer in zip(pending, answers):
+            if answer is not None:
+                out[record.id] = answer
+
+    for record in pending:
+        out.setdefault(record.id, UNKNOWN_DIAGNOSIS.model_copy())
+    return out, signals
+
+
+def _ask_layer_2(records, signals, llm) -> list[Diagnosis | None]:
+    """Batched where the diagnoser supports it, one at a time where it does not.
+
+    `many` is a method on CachedDiagnoser, but `llm` is only ever promised to be
+    callable — tests inject bare lambdas and `--no-llm` injects nothing. So the
+    batched path is taken when it is offered and the old one still works when it
+    is not, which is the same shape as every other degradation in this file.
+    """
+    calls = [(r, signals.get(r.id)) for r in records]
+    many = getattr(llm, "many", None)
+    if callable(many):
+        try:
+            return many(calls)
+        except Exception:  # noqa: BLE001 - degrade, never crash the batch
+            pass
+
+    answers = []
+    for record, signal in calls:
+        try:
+            answers.append(llm(record, signal))
+        except Exception:  # noqa: BLE001
+            answers.append(None)
+    return answers

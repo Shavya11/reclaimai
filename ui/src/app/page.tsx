@@ -333,7 +333,7 @@ export default function Page() {
               busy={busy === "run" || seeding}
               onClick={() => act("run", "/api/run-batch")}
               disabled={!!busy || seeding}
-              title="Reset and walk the whole demo arc from t=0. Takes about two minutes."
+              title="Reset and walk the whole demo arc from t=0. Takes about a minute."
             >
               {busy === "run" || seeding ? "Running…" : "Run batch"}
             </Button>
@@ -635,10 +635,11 @@ function Warming({ stage }: { stage?: string | null }) {
           filling in.
         </p>
         <p className="mt-1 text-muted">
-          The agent is walking the demo arc: 120 records detected, every one
+          The agent is walking the demo arc: 180 records detected, every one
           diagnosed, then the whole schedule replayed so deferred work lands.
-          With layer 2 on that is about two minutes, because a free model tier
-          is paced. Nothing is missing — the zeroes below mean{" "}
+          With layer 2 on that is under a minute: the records layer 1 cannot
+          resolve go up ten to a request, because a free model tier meters
+          requests and not records. Nothing is missing — the zeroes below mean{" "}
           <em>not yet</em>, not <em>nothing was recovered</em>.
         </p>
         <p className="mt-1 text-dim">Refreshing automatically.</p>

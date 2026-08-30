@@ -193,17 +193,17 @@ def process_replies(replies: dict[str, str], records: dict[str, AtRiskRecord],
     at = at or now()
     result = ReplyResult()
 
-    for record_id, text in replies.items():
-        record = records.get(record_id)
-        if record is None or not str(text).strip():
-            continue
+    # Read them all first, in as few requests as the extractor allows, and apply
+    # them afterwards. Reading and applying were interleaved, which on a free
+    # tier metered per minute made a tick's replies cost one paced call each -
+    # and every one of those seconds came out of the same budget layer 2 is
+    # already spending. Applying is unchanged and still one record at a time.
+    readable = [(rid, text) for rid, text in replies.items()
+                if records.get(rid) is not None and str(text).strip()]
+    readings = _read_all([(rid, t) for rid, t in readable], records, extractor, at)
 
-        reading = None
-        if extractor is not None:
-            try:
-                reading = extractor(text, at, record)
-            except Exception as exc:  # noqa: BLE001 - never kill the batch
-                log.warning("reply extraction failed for %s: %s", record_id, exc)
+    for (record_id, text), reading in zip(readable, readings):
+        record = records[record_id]
         if reading is None:
             reading = keyword_fallback(text)
 
@@ -216,6 +216,36 @@ def process_replies(replies: dict[str, str], records: dict[str, AtRiskRecord],
             result.to_human += 1
 
     return result
+
+
+def _read_all(items, records, extractor, at) -> list:
+    """One reading per reply, in order, or None where the model could not.
+
+    Batched when the extractor offers it, one at a time when it does not, and
+    None on any failure so the keyword fallback takes over — the same three-way
+    degradation diagnosis runs under, for the same reason: an unreadable reply
+    must reach a person, never stop a tick.
+    """
+    if extractor is None or not items:
+        return [None] * len(items)
+
+    calls = [(text, at, records[record_id]) for record_id, text in items]
+
+    many = getattr(extractor, "many", None)
+    if callable(many):
+        try:
+            return many(calls)
+        except Exception as exc:  # noqa: BLE001 - never kill the batch
+            log.warning("batched reply extraction failed: %s", exc)
+
+    readings = []
+    for (record_id, _), call in zip(items, calls):
+        try:
+            readings.append(extractor(*call))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("reply extraction failed for %s: %s", record_id, exc)
+            readings.append(None)
+    return readings
 
 
 def keyword_fallback(text: str) -> ReplyReading:

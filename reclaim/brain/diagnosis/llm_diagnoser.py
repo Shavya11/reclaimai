@@ -4,10 +4,11 @@ Forced tool use, because a closed schema is what makes hallucination harmless:
 the model cannot invent a root cause, only pick a wrong one from a fixed list —
 and the policy table and guardrails below it still hold either way.
 
-Three cost controls, all required for a 120-record batch to finish in seconds:
-signature caching (identical error shapes are one call, not forty), a semaphore
-so we do not open 120 sockets at once, and a fallback chain that degrades to
-UNKNOWN rather than failing the batch.
+Four cost controls, all required for a 120-record batch to finish in seconds:
+signature caching (identical error shapes are one call, not forty), request
+batching (the surviving records go up ten to a call, because a free tier meters
+requests and not records), a semaphore so we do not open 120 sockets at once,
+and a fallback chain that degrades to UNKNOWN rather than failing the batch.
 
 The model NEVER decides the action, the amount, the timing or the recipient.
 It returns a label and a confidence. That is the entire contract.
@@ -31,6 +32,23 @@ log = logging.getLogger(__name__)
 
 MAX_CONCURRENCY = 8
 MAX_TOKENS = 2048
+
+# How many records ride in one request. The binding constraint is a free tier
+# that meters REQUESTS per minute, not records, so the arc's cost is the number
+# of calls and nothing else. Ten keeps the reply well inside the output budget
+# and keeps a single bad response from costing more than ten records, which the
+# per-item fallback then re-asks individually anyway.
+BATCH_SIZE = 10
+
+# One record's answer is a label, a float and two sentences. This is generous
+# for that, and truncating the reply is the one failure mode that would cost a
+# whole chunk at once.
+MAX_TOKENS_PER_ITEM = 400
+BATCH_BASE_TOKENS = 1024
+
+
+def batch_max_tokens(n: int) -> int:
+    return min(BATCH_BASE_TOKENS + MAX_TOKENS_PER_ITEM * n, 16384)
 
 DIAGNOSIS_TOOL: dict[str, Any] = {
     "name": "record_diagnosis",
@@ -155,6 +173,61 @@ situations and the second is the one to worry about.
 You are producing a label only. You do not decide what happens next."""
 
 
+def batch_tool(single: dict[str, Any]) -> dict[str, Any]:
+    """Wrap a one-item tool schema into an array-of-answers schema.
+
+    Derived from the single-item tool rather than written beside it, so the
+    closed enum that makes a hallucination harmless cannot drift between the
+    batched path and the one it falls back to. `index` is what ties an answer
+    to the record it is about; without it a model that returns nine answers for
+    ten records silently shifts every label by one.
+    """
+    item = copy.deepcopy(single["input_schema"])
+    item["properties"]["index"] = {
+        "type": "integer",
+        "description": "The `index` of the record this answer is about, copied exactly.",
+    }
+    item["required"] = ["index"] + list(single["input_schema"]["required"])
+    return {
+        "name": f"{single['name']}_batch",
+        "description": (
+            f"{single['description']} Called once for a numbered list of them: "
+            f"return exactly one entry per record, each carrying the `index` it "
+            f"answers."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"answers": {"type": "array", "items": item}},
+            "required": ["answers"],
+        },
+    }
+
+
+BATCH_INSTRUCTION = """
+You are being given a NUMBERED LIST of items instead of a single one. Judge each
+one entirely on its own evidence — they are unrelated cases that share a request
+only to save quota, and nothing about one is evidence about another. Return
+exactly one answer per item, each carrying the `index` it answers, copied
+exactly. Do not merge items, do not skip one because it resembles another, and
+do not let a confident item raise your confidence on an unclear one."""
+
+
+def unpack_batch(payload: dict, count: int, validate) -> list[Any]:
+    """Answers back in the caller's order. A missing or out-of-range index is a
+    None the caller re-asks or degrades — never a silent shift."""
+    out: list[Any] = [None] * count
+    for entry in payload.get("answers") or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            i = int(entry["index"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0 <= i < count and out[i] is None:
+            out[i] = validate(entry)
+    return out
+
+
 class CachedDiagnoser:
     """Everything about an LLM call in this system that is not the provider.
 
@@ -221,6 +294,118 @@ class CachedDiagnoser:
     def _ask(self, *args):
         raise NotImplementedError
 
+    # --- batching -------------------------------------------------------------
+    #
+    # The cost of an arc on a free tier is the number of REQUESTS it makes, not
+    # the number of records it reasons about. Everything below turns 120 records
+    # into a handful of calls, and it lives on the base class because it is a
+    # property of the layer, not of a vendor: a provider that cannot batch
+    # simply does not override `_ask_batch` and falls through to the one-at-a-
+    # time path with nothing else to write.
+
+    def _group(self, *args):
+        """What may share a request. `None` means anything may."""
+        return None
+
+    def _ask_batch(self, calls: list[tuple]):
+        """One request for many items, or None to mean 'ask them singly'."""
+        return None
+
+    def many(self, calls: list[tuple]) -> list[Any]:
+        """Answer a whole batch, in the caller's order.
+
+        Same three guarantees as `__call__`, which is the point of putting it
+        here: identical inputs cost one call, a failure returns None so the
+        caller degrades, and nothing raises. Duplicates are collapsed BEFORE
+        dispatch rather than after — asking ten identical questions in one
+        request would be one call, but it would also be ten records' worth of
+        output tokens spent to learn one thing.
+        """
+        results: list[Any] = [None] * len(calls)
+        if not calls or not self.available:
+            return results
+
+        keys = [self._signature(*c) for c in calls]
+        first: dict[str, int] = {}
+        for i, key in enumerate(keys):
+            hit = self._cached(key)
+            if hit is not None:
+                results[i] = hit
+            elif key not in first:
+                first[key] = i
+
+        chunks = self._chunks(list(first.values()), calls)
+        for chunk, answers in zip(chunks, self._dispatch(chunks, calls)):
+            for i, answer in zip(chunk, answers):
+                if answer is not None:
+                    with self._lock:
+                        self._cache[keys[i]] = answer
+                    results[i] = answer
+
+        # Every duplicate now answers from what its representative just learned.
+        for i, key in enumerate(keys):
+            if results[i] is None:
+                results[i] = self._cached(key)
+        return results
+
+    def _dispatch(self, chunks: list[list[int]], calls: list[tuple]) -> list[list]:
+        """Every chunk in flight at once, up to MAX_CONCURRENCY.
+
+        The semaphore was here from the first commit and nothing had ever
+        contended for it: the caller asked record by record, in a loop, so the
+        cap on sockets was one. It is real now. A provider that paces itself
+        (the free Gemini tier does) still serialises behind its own gate, which
+        is the correct outcome — the cap is a ceiling, not a target.
+        """
+        if len(chunks) < 2:
+            return [self._one_chunk(c, calls) for c in chunks]
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=MAX_CONCURRENCY) as pool:
+            return list(pool.map(lambda c: self._one_chunk(c, calls), chunks))
+
+    def _one_chunk(self, chunk: list[int], calls: list[tuple]) -> list:
+        answers = None
+        try:
+            with self._semaphore:
+                answers = self._ask_batch([calls[i] for i in chunk])
+        except Exception as exc:  # noqa: BLE001 - API down must not kill the batch
+            log.warning("%s batch call failed: %s", type(self).__name__, exc)
+
+        if answers is None:
+            # The whole request failed or the provider does not batch. Ask them
+            # one at a time through the ordinary path, which has its own retry
+            # and its own fallback, and take its answer as final — re-asking
+            # something it has already declined spends a second call to be told
+            # the same thing.
+            return [self(*calls[i]) for i in chunk]
+
+        # An item the BATCH skipped is worth one direct question before it
+        # becomes an UNKNOWN a human has to pick up.
+        return [a if a is not None else self(*calls[i])
+                for i, a in zip(chunk, answers)]
+
+    def _cached(self, key: str):
+        with self._lock:
+            hit = self._cache.get(key)
+        if hit is None:
+            return None
+        self.cache_hits += 1
+        return hit.model_copy()
+
+    def _chunks(self, indices: list[int], calls: list[tuple]) -> list[list[int]]:
+        """Group first, then cut. Grouping is what lets the diagnosis tool keep
+        its enum narrowed to one leak type - an invoice and a declined card in
+        the same request would have to be offered the union of both, and the
+        narrowed enum is half of why a hallucination here is harmless."""
+        buckets: dict[Any, list[int]] = {}
+        for i in indices:
+            buckets.setdefault(self._group(*calls[i]), []).append(i)
+        return [group[n:n + BATCH_SIZE]
+                for group in buckets.values()
+                for n in range(0, len(group), BATCH_SIZE)]
+
 
 class LLMDiagnoser(CachedDiagnoser):
     def __init__(self, client=None, model: str | None = None) -> None:
@@ -249,6 +434,34 @@ class LLMDiagnoser(CachedDiagnoser):
             if getattr(block, "type", None) == "tool_use":
                 return _validate(block.input)
         return None
+
+    def _group(self, record, signal=None):
+        return record.leak_type
+
+    def _ask_batch(self, calls):
+        self.calls += 1
+        records = [c[0] for c in calls]
+        response = self._client.messages.create(
+            model=self.model,
+            max_tokens=batch_max_tokens(len(calls)),
+            system=prompt_for(records[0]) + BATCH_INSTRUCTION,
+            tools=[batch_tool_for(records[0])],
+            tool_choice={"type": "tool", "name": f"{DIAGNOSIS_TOOL['name']}_batch"},
+            messages=[{"role": "user",
+                       "content": json.dumps(build_batch_context(calls), indent=2)}],
+        )
+        for block in response.content:
+            if getattr(block, "type", None) == "tool_use":
+                return unpack_batch(block.input, len(calls), _validate)
+        return None
+
+
+def build_batch_context(calls) -> dict:
+    records = []
+    for i, call in enumerate(calls):
+        record, signal = call[0], (call[1] if len(call) > 1 else None)
+        records.append({"index": i, **build_context(record, signal)})
+    return {"records": records}
 
 
 def _validate(payload: dict) -> Diagnosis | None:
@@ -289,6 +502,12 @@ def tool_for(record: AtRiskRecord) -> dict[str, Any]:
         c.value for c in RootCause if c in allowed
     ]
     return tool
+
+
+def batch_tool_for(record: AtRiskRecord) -> dict[str, Any]:
+    """The batched tool, narrowed exactly as the single one is. Built from
+    `tool_for` so the narrowing has one implementation, not two."""
+    return batch_tool(tool_for(record))
 
 
 def prompt_for(record: AtRiskRecord) -> str:

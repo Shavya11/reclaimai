@@ -12,6 +12,7 @@ schema — and a filled-in schema that fails Pydantic is still an UNKNOWN, not a
 crash.
 """
 
+import json
 import logging
 import random
 import threading
@@ -20,13 +21,18 @@ import time
 from ...config import settings
 from ...models import Diagnosis
 from .llm_diagnoser import (
+    BATCH_INSTRUCTION,
     DIAGNOSIS_TOOL,
     MAX_TOKENS,
     CachedDiagnoser,
     _validate,
+    batch_max_tokens,
+    batch_tool_for,
+    build_batch_context,
     build_context,
     prompt_for,
     tool_for,
+    unpack_batch,
 )
 
 log = logging.getLogger(__name__)
@@ -34,9 +40,13 @@ log = logging.getLogger(__name__)
 TOOL_NAME = DIAGNOSIS_TOOL["name"]
 
 # The free tier is metered per minute as well as per day, and the per-minute
-# cap is the one a batch trips: 120 records through a semaphore of 8 arrive as
-# a burst, not a stream. Pacing to just under the documented 15/min costs a
-# batch about two minutes and turns a guaranteed 429 into none.
+# cap is the one a batch trips. Pacing to just under the documented 15/min turns
+# a guaranteed 429 into none.
+#
+# What made this expensive was never the pacing — it was asking record by
+# record, which put forty serialised sleeps in the arc and left no margin for
+# the retries below, so one 429 begat the next. Batching moved the arc to about
+# a dozen requests, and at that volume this gate costs seconds.
 #
 # This matters more than it looks. A 429 degrades to UNKNOWN, which is
 # indistinguishable in the scoreboard from the model honestly declining to
@@ -45,6 +55,27 @@ TOOL_NAME = DIAGNOSIS_TOOL["name"]
 # "layer 2 was throttled" from being reported as "layer 2 found nothing".
 MIN_INTERVAL_S = 4.2
 MAX_RETRIES = 3
+
+
+def _tool_config(tool: dict, system: str, max_tokens: int):
+    """Gemini's equivalent of `tool_choice`: mode ANY plus an allowed name. The
+    guarantee is the one the single-record path always had - the model cannot
+    answer in prose, only fill in the schema - and it is written once so the
+    batched path cannot quietly lose it."""
+    from google.genai import types
+
+    return types.GenerateContentConfig(
+        system_instruction=system,
+        max_output_tokens=max_tokens,
+        tools=[types.Tool(function_declarations=[types.FunctionDeclaration(
+            name=tool["name"],
+            description=tool["description"],
+            parameters_json_schema=tool["input_schema"],
+        )])],
+        tool_config=types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(
+                mode="ANY", allowed_function_names=[tool["name"]])),
+    )
 
 
 class GeminiDiagnoser(CachedDiagnoser):
@@ -71,31 +102,30 @@ class GeminiDiagnoser(CachedDiagnoser):
                 time.sleep(wait)
             cls._last_call = time.monotonic()
 
-    def _ask(self, record, signal=None) -> Diagnosis | None:
-        from google.genai import types
+    def _group(self, record, signal=None):
+        return record.leak_type
 
+    def _ask_batch(self, calls):
+        """Ten records, one request. On a tier metered per minute by request
+        this is the difference between an arc that finishes inside a demo and
+        one that spends four minutes asleep in `_pace`."""
         self.calls += 1
-        tool = tool_for(record)
-        config = types.GenerateContentConfig(
-            system_instruction=prompt_for(record),
-            max_output_tokens=MAX_TOKENS,
-            tools=[
-                types.Tool(
-                    function_declarations=[
-                        types.FunctionDeclaration(
-                            name=TOOL_NAME,
-                            description=tool["description"],
-                            parameters_json_schema=tool["input_schema"],
-                        )
-                    ]
-                )
-            ],
-            tool_config=types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(
-                    mode="ANY", allowed_function_names=[TOOL_NAME]
-                )
-            ),
-        )
+        records = [c[0] for c in calls]
+        config = _tool_config(batch_tool_for(records[0]),
+                              prompt_for(records[0]) + BATCH_INSTRUCTION,
+                              batch_max_tokens(len(calls)))
+        response = self._generate(
+            json.dumps(build_batch_context(calls), indent=2), config)
+        if response is None:
+            return None
+        for call in response.function_calls or []:
+            if call.name == f"{TOOL_NAME}_batch":
+                return unpack_batch(dict(call.args or {}), len(calls), _validate)
+        return None
+
+    def _ask(self, record, signal=None) -> Diagnosis | None:
+        self.calls += 1
+        config = _tool_config(tool_for(record), prompt_for(record), MAX_TOKENS)
         response = self._generate(_prompt(record, signal), config)
         if response is None:
             return None
