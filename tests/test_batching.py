@@ -158,10 +158,14 @@ def test_a_group_larger_than_the_batch_size_is_cut_not_sent_whole():
 
 def test_identical_records_are_asked_once_and_answered_everywhere():
     records = [_record(f"R{i}", reason="same") for i in range(5)]
-    d = Recorder(batch=lambda calls: [_diagnosis(reasoning="once") for _ in calls])
+    d = Recorder(batch=lambda calls: [_diagnosis(reasoning="once") for _ in calls],
+                 single=lambda record: _diagnosis(reasoning="once"))
     out = d.many([(r, None) for r in records])
 
-    assert d.batches == [["R0"]], "duplicates must collapse before dispatch"
+    # Collapsed to one question - and one question is asked singly, not through
+    # the batched schema.
+    assert d.batches == [], "duplicates must collapse before dispatch"
+    assert d.singles == ["R0"]
     assert all(o.reasoning == "once" for o in out)
     assert d.cache_hits == 4
 
@@ -244,7 +248,8 @@ def test_records_layer_1_resolves_are_never_sent_to_layer_2():
     d = Recorder(batch=lambda calls: [_diagnosis() for _ in calls])
     out, _ = diagnose_batch([resolved, unresolved], {}, llm=d)
 
-    assert d.batches == [["R1"]]
+    assert d.batches == [], "one survivor is one ordinary question"
+    assert d.singles == ["R1"], "only the record layer 1 could not resolve"
     assert out["R0"].source != "llm"
 
 
@@ -290,3 +295,33 @@ def test_chunks_go_out_concurrently_up_to_the_cap():
     assert len(d.batches) == 3
     assert all(o is not None for o in out)
     assert MAX_CONCURRENCY >= 3
+
+
+def test_a_single_record_is_asked_the_way_it_always_was():
+    """The sandbox previews one record through `diagnose_batch`. One record is
+    the same one request either way, so it must keep the single-item tool and
+    the prompt that goes with it rather than being told it is reading a list."""
+    d = Recorder(batch=lambda calls: [_diagnosis() for _ in calls])
+    out = d.many([(_record("SBX", reason="free text a visitor typed"), None)])
+
+    assert d.batches == [], "one record must not use the batched schema"
+    assert d.singles == ["SBX"]
+    assert out[0] is not None
+
+
+def test_the_ablation_stays_on_the_per_record_path():
+    """`evidence/ablation.json`, the README row and DAY7-HANDOFF all publish
+    38 layer-2 API calls, measured record by record. The ablation's wrapper does
+    not forward `many`, so batching cannot move that number behind their backs -
+    and this is the test that says so out loud rather than leaving it to luck."""
+    from reclaim.experiments.ablation import _CountingDiagnoser
+
+    counted = _CountingDiagnoser(Recorder(batch=lambda c: [_diagnosis() for _ in c]))
+    assert not hasattr(counted, "many"), (
+        "forwarding many() rebatches the ablation and moves a published figure"
+    )
+
+    records = [_record(f"R{i}", reason=f"unresolvable-{i}") for i in range(4)]
+    diagnose_batch(records, {}, llm=counted)
+    assert counted._inner.batches == [], "the ablation must not batch"
+    assert sorted(counted._inner.singles) == ["R0", "R1", "R2", "R3"]

@@ -366,6 +366,15 @@ class CachedDiagnoser:
             return list(pool.map(lambda c: self._one_chunk(c, calls), chunks))
 
     def _one_chunk(self, chunk: list[int], calls: list[tuple]) -> list:
+        # A list of one is not a batch. It costs the same single request either
+        # way, so asking it through the batched schema buys nothing and spends
+        # something: a wider tool and a prompt telling the model it is reading a
+        # numbered list. The sandbox previews exactly one record, and that is a
+        # visitor-facing path which should ask its question the way it always
+        # did.
+        if len(chunk) == 1:
+            return [self(*calls[chunk[0]])]
+
         answers = None
         try:
             with self._semaphore:

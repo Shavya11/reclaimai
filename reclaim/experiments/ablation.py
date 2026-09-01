@@ -86,6 +86,15 @@ class _CountingDiagnoser:
 
     Cache hits count as successful calls, because they are: the answer came from
     the model, once.
+
+    Deliberately NOT forwarding `many`. The engine batches only a diagnoser that
+    offers it, so wrapping one here puts the ablation back on the per-record
+    path — which is the path every published layer-2 figure was measured on, and
+    `api_calls` below means "requests that left the process". Forward `many` and
+    that number falls from 38 to about five without a single arm changing, so
+    `evidence/ablation.json`, the README row and DAY7-HANDOFF would all quietly
+    describe a run nobody made. If you ever want the ablation batched, move the
+    number and the documents in the same commit.
     """
 
     def __init__(self, inner) -> None:
