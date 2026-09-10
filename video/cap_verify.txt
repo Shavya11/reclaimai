@@ -1,0 +1,14 @@
+        [2m1 settled record(s) still open in the queue: INV_7059[0m
+  [32mPASS[0m  self-cure is the same in both arms
+        [2m34 of 180 would have paid unprompted, identical every run and in every arm[0m
+  [32mPASS[0m  what-if replay leaves no trace
+        [2m3848 rows and the demo clock unchanged across a full two-arc replay[0m
+  [32mPASS[0m  visitor records stay out of the published figures
+        [2ma ₹99,000 visitor record moved no published figure and landed in its own bucket[0m
+  [32mPASS[0m  sandbox preview leaves no trace
+        [2m5 previews wrote no row and moved no clock[0m
+  [32mPASS[0m  dashboard is built and servable
+        [2mui/out/index.html present (24 KB), newer than every file in ui/src[0m
+
+  27 passed, 1 failed, 0 pending
+

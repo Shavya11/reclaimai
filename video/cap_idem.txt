@@ -1,0 +1,13 @@
+
+[1mIDEMPOTENCY UNDER CRASH[0m
+
+  1. [33mSimulated crash after 33 actions. The batch is resumable: re-run and every claimed key will be skipped.[0m
+  2. keys claimed before the crash: [1m8[0m
+  3. resumed — guardrail #10 blocked [1m0[0m replays before they reached Razorpay
+
+     executed_actions rows      21
+     distinct keys              21
+     [1mduplicate keys[0m          [32m    0[0m
+
+  [32mNo action executed twice. The UNIQUE constraint on idempotency_key makes it impossible.[0m
+

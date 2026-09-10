@@ -1,0 +1,22 @@
+  rate by value                          42.4%         24.5%
+  rate by record                         45.0%         38.3%
+  customer contacts                        418           169
+  contacts per recovery                   5.16          2.45
+  contacts to opted-out                     44             0
+  contacts on DND                           66             0
+  contacts in quiet hours                  330             0
+  retries on never-retry causes             30             0
+
+  [31mThe naive strategy commits 729 contacts the guardrail engine refuses.[0m
+
+[1mWHERE THE NAIVE STRATEGY WINS, AND WHY[0m
+  [2mIt recovers ₹23,52,777 we do not. Every rupee of it is accounted for:[0m
+
+     11    ₹12,33,478   customer opted out or on DND - contact refused
+      3     ₹8,59,448   above the value ceiling - routed to a human
+      2       ₹12,104   still in flight - deferred, not abandoned
+      7     ₹2,47,747   our strategy simply did worse here
+
+    [1m₹20,92,926[0m of that is money the agent was told not to take.
+    ₹12,104 is still in flight - deferred, not abandoned.
+

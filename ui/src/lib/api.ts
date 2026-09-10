@@ -38,7 +38,13 @@ async function request<T>(path: string, init: RequestInit, timeout: number): Pro
     if (!response.ok) {
       let detail: string | undefined;
       try {
-        detail = (await response.json())?.detail;
+        const body = (await response.json())?.detail;
+        // FastAPI's 422 detail is an OBJECT ({problems: [...]}), not a string.
+        // Carrying it through untouched made validationProblems JSON.parse an
+        // object, throw, and hand React an object to render as a child — which
+        // killed the whole page instead of showing the refusal. Normalise to a
+        // string here so there is exactly one shape downstream.
+        detail = typeof body === "string" ? body : body == null ? undefined : JSON.stringify(body);
       } catch {
         // A proxy error page is not JSON. The status code is the message.
       }

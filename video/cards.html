@@ -1,0 +1,204 @@
+<meta charset="utf-8">
+<title>ReclaimAI — video cards</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --canvas:#f1f0eb; --panel:#fff; --panel2:#f7f6f2;
+    --line:#e4e3dd; --linestrong:#d3d2ca;
+    --ink:#10151c; --muted:#4a5568; --dim:#5e6a78;
+    --green:#14764f; --greendeep:#0d4a33; --greenwash:#eaf5ef; --greensoft:#bfe3d0;
+    --red:#b4231f; --redwash:#fdeceb;
+    --amber:#a05a06; --amberwash:#fdf2e2;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#555;font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:var(--ink)}
+  .num{font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
+  .card{
+    width:1920px;height:1080px;background:var(--canvas);
+    padding:96px 112px;display:flex;flex-direction:column;
+    position:relative;overflow:hidden;
+  }
+  .eyebrow{font-size:20px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--green)}
+  .rule{height:1px;background:var(--linestrong);margin:28px 0}
+
+  /* ---------- card 1 ---------- */
+  #c1 .wordmark{font-size:104px;font-weight:800;letter-spacing:-.035em;line-height:1}
+  #c1 .tagline{font-size:30px;font-weight:500;color:var(--muted);margin-top:14px}
+  #c1 .statement{font-size:62px;font-weight:600;line-height:1.24;letter-spacing:-.02em;max-width:1560px}
+  #c1 .statement em{font-style:normal;color:var(--green)}
+  #c1 .chips{display:flex;gap:14px;flex-wrap:wrap}
+  #c1 .chip{
+    background:var(--panel);border:1px solid var(--line);border-radius:999px;
+    padding:14px 26px;font-size:22px;font-weight:600;color:var(--muted);
+  }
+  #c1 .atrisk{
+    display:flex;align-items:baseline;gap:20px;
+    border-left:5px solid var(--red);padding-left:26px;
+  }
+  #c1 .atrisk .fig{font-size:66px;font-weight:700;letter-spacing:-.02em;color:var(--red)}
+  #c1 .atrisk .lbl{font-size:23px;font-weight:600;color:var(--muted);white-space:nowrap;line-height:1.4}
+
+  /* ---------- card 2 ---------- */
+  #c2 .headline{font-size:66px;font-weight:800;letter-spacing:-.025em;line-height:1.1}
+  #c2 .sub{font-size:25px;color:var(--muted);margin-top:16px;font-weight:500;max-width:1200px;line-height:1.5}
+  .pipe{display:flex;align-items:stretch;gap:0;margin-top:52px}
+  .stage{
+    flex:1;background:var(--panel);border:1px solid var(--line);
+    padding:26px 22px;text-align:center;position:relative;
+  }
+  .stage:first-child{border-radius:16px 0 0 16px}
+  .stage:last-child{border-radius:0 16px 16px 0}
+  .stage + .stage{border-left:none}
+  .stage .n{font-size:15px;font-weight:700;color:var(--greensoft)}
+  .stage .t{font-size:26px;font-weight:700;margin-top:8px;letter-spacing:-.01em}
+  .stage .d{font-size:16px;color:var(--dim);margin-top:8px;line-height:1.4}
+  .stage.hot{background:var(--greenwash);border-color:var(--greensoft)}
+  .stage.hot .n{color:var(--green)}
+
+  .zoom{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:0;align-items:center;margin-top:44px}
+  .box{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:30px 32px}
+  .box.model{border:2px dashed var(--red);background:var(--redwash)}
+  .box.gate{border:2px solid var(--green);background:var(--greenwash)}
+  .box .k{font-size:16px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+  .box .v{font-size:32px;font-weight:700;margin-top:10px;letter-spacing:-.015em}
+  .box .m{font-size:17px;color:var(--muted);margin-top:10px;line-height:1.45}
+  .arrow{padding:0 26px;font-size:34px;color:var(--linestrong);font-weight:700}
+  #c2 .foot{
+    margin-top:auto;display:flex;align-items:center;gap:18px;
+    background:var(--panel);border:1px solid var(--line);border-left:5px solid var(--red);
+    border-radius:12px;padding:24px 30px;font-size:25px;font-weight:600;
+  }
+  #c2 .foot b{color:var(--red)}
+
+  /* ---------- card 3 ---------- */
+  #c3 .headline{font-size:60px;font-weight:800;letter-spacing:-.025em;line-height:1.14;max-width:1500px}
+  #c3 .headline em{font-style:normal;color:var(--green)}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:auto}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:32px 30px}
+  .stat .v{font-size:52px;font-weight:700;letter-spacing:-.025em;line-height:1}
+  .stat .l{font-size:18px;color:var(--muted);margin-top:14px;font-weight:600;line-height:1.35}
+  .stat.g .v{color:var(--green)} .stat.r .v{color:var(--red)}
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px;margin-bottom:auto}
+  .split .col{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:30px 32px}
+  .split .col h4{font-size:16px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+  .split .col.real h4{color:var(--green)} .split .col.mod h4{color:var(--amber)}
+  .split .col p{font-size:20px;color:var(--muted);margin-top:14px;line-height:1.55}
+  #c3 .links{
+    display:flex;gap:48px;align-items:flex-start;
+    border-top:1px solid var(--linestrong);padding-top:30px;
+  }
+  #c3 .links .k{font-size:15px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:9px}
+  #c3 .links .u{font-weight:600;font-size:20px;white-space:nowrap}
+</style>
+
+<!-- ============================= CARD 1 — PROBLEM ============================= -->
+<div class="card" id="c1">
+  <div class="eyebrow">Razorpay Buildathon &nbsp;·&nbsp; Track 03 &nbsp;·&nbsp; AI Revenue Recovery</div>
+  <div class="rule"></div>
+  <div class="wordmark">ReclaimAI</div>
+  <div class="tagline">An agent that diagnoses why revenue leaked — and refuses to act when it shouldn't.</div>
+
+  <div style="margin-top:auto;margin-bottom:auto">
+    <div class="statement">
+      Every payment that fails is revenue a merchant
+      has already earned — and will <em>probably never see</em>.
+    </div>
+  </div>
+
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:60px">
+    <div class="chips">
+      <div class="chip">Failed payments</div>
+      <div class="chip">Abandoned carts</div>
+      <div class="chip">Bounced mandates</div>
+      <div class="chip">Overdue B2B invoices</div>
+    </div>
+    <div class="atrisk">
+      <div class="fig num">₹1,12,09,814</div>
+      <div class="lbl">at risk<br><span class="num">180</span> records</div>
+    </div>
+  </div>
+</div>
+
+<!-- ========================== CARD 2 — ARCHITECTURE ========================== -->
+<div class="card" id="c2">
+  <div class="eyebrow">Architecture</div>
+  <div class="rule"></div>
+  <div class="headline">The LLM never touches money.</div>
+  <div class="sub">
+    It returns one label from a closed enum of 17 root causes, with a confidence score.
+    A deterministic policy table turns that label into a <i>proposed</i> action.
+    A deterministic guardrail engine decides whether it may fire.
+  </div>
+
+  <div class="pipe">
+    <div class="stage"><div class="n num">01</div><div class="t">Detect</div><div class="d">4 leak types,<br>one plugin each</div></div>
+    <div class="stage hot"><div class="n num">02</div><div class="t">Diagnose</div><div class="d">lookup → cohort<br>→ model</div></div>
+    <div class="stage hot"><div class="n num">03</div><div class="t">Decide</div><div class="d">policy table<br>in YAML</div></div>
+    <div class="stage hot"><div class="n num">04</div><div class="t">Gate</div><div class="d">14 guardrails,<br>fail closed</div></div>
+    <div class="stage"><div class="n num">05</div><div class="t">Execute</div><div class="d">idempotency-keyed<br>Razorpay writes</div></div>
+    <div class="stage"><div class="n num">06</div><div class="t">Attribute</div><div class="d">signed webhook<br>→ intervention</div></div>
+  </div>
+
+  <div class="zoom">
+    <div class="box model">
+      <div class="k">The model</div>
+      <div class="v">A label. Nothing else.</div>
+      <div class="m">1 of 17 causes + confidence. Forced tool use, schema-validated. It may write message <i>text</i> — never the action, amount, timing or recipient.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box">
+      <div class="k">Policy table</div>
+      <div class="v">Data, not code</div>
+      <div class="m">cause → action, channel, schedule. Stamps a <span class="num">policy_ref</span> on every decision so it traces back.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box gate">
+      <div class="k">Guardrail engine</div>
+      <div class="v">14 rules, fail closed</div>
+      <div class="m">Consent · DND · quiet hours · frequency cap · value ceiling · confidence floor · idempotency · promise window …</div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <b>So a hallucination is harmless by construction.</b>
+    &nbsp;The worst a wrong label can do is cause a badly-timed retry — never a wrong charge.
+  </div>
+</div>
+
+<!-- =========================== CARD 3 — CONCLUSION =========================== -->
+<div class="card" id="c3">
+  <div class="eyebrow">In summary</div>
+  <div class="rule"></div>
+  <div class="headline">It diagnoses before it acts —<br>and it <em>refuses more often than it acts</em>.</div>
+
+  <div class="stats">
+    <div class="stat g"><div class="v num">₹27,44,651</div><div class="l">recovered · 38.3% of records</div></div>
+    <div class="stat r"><div class="v num">439</div><div class="l">guardrail refusals across 154 records</div></div>
+    <div class="stat"><div class="v num">2.45</div><div class="l">contacts per recovery<br>(naive baseline: 5.16)</div></div>
+    <div class="stat"><div class="v num">402</div><div class="l">tests · 28 structural checks · 0 duplicate keys</div></div>
+  </div>
+
+  <div class="split">
+    <div class="col real">
+      <h4>Real</h4>
+      <p>Razorpay test-mode API, live error codes, HMAC-SHA256 over raw bytes,
+         the attribution walk from a paid link back to the intervention that minted it,
+         every model call, all 14 guardrails and every refusal.</p>
+    </div>
+    <div class="col mod">
+      <h4>Modelled</h4>
+      <p>Whether a given customer pays, and whether they would have paid anyway.
+         Per-cause priors are stated estimates, published so they can be argued with —
+         not measured rates.</p>
+    </div>
+  </div>
+
+  <div class="links">
+    <div><div class="k">Repository</div><div class="u num">github.com/Shavya11/reclaimai</div></div>
+    <div><div class="k">Dashboard</div><div class="u num">reclaimai-eight.vercel.app</div></div>
+    <div><div class="k">API</div><div class="u num">reclaimai-api.onrender.com</div></div>
+    <div><div class="k">Reproduce</div><div class="u num">seed 42 · one command · no credentials</div></div>
+  </div>
+</div>

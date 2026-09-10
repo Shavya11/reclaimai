@@ -1,0 +1,171 @@
+<meta charset='utf-8'>
+<link href='https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap' rel='stylesheet'>
+<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tomorrow-night.min.css'>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js'></script>
+<style>
+:root{--bg:#0b0d10;--panel:#14181d;--line:#262d36;--ink:#e8edf3;
+      --muted:#a4b0be;--dim:#8b97a6;--green:#34d399;--amber:#fbbf24;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#333;font-family:'Plus Jakarta Sans',system-ui,sans-serif}
+.card{width:1920px;height:1080px;background:var(--bg);color:var(--ink);
+      padding:64px 80px;display:flex;flex-direction:column;overflow:hidden}
+.hdr{display:flex;align-items:baseline;gap:24px;
+     border-bottom:1px solid var(--line);padding-bottom:22px;margin-bottom:30px}
+.path{font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:600;
+      color:var(--green)}
+.note{font-size:22px;color:var(--muted);margin-left:auto;font-weight:500}
+pre{flex:1;overflow:hidden}
+code{font-family:'JetBrains Mono',monospace;font-size:23px;line-height:1.62;
+     white-space:pre;display:block;background:none!important;padding:0!important}
+.hljs-comment,.hljs-quote{color:#7d8b9a;font-style:italic}
+.hljs-string,.hljs-attr{color:#7fd6a8}
+.hljs-keyword,.hljs-built_in{color:#c9a5f5}
+.hljs-number,.hljs-literal{color:#fbbf24}
+.hljs-title,.hljs-class .hljs-title,.hljs-function .hljs-title{color:#7cc4ff}
+</style>
+<div class='card' id='C08'><div class='hdr'><span class='path'>reclaim/</span><span class='note'>The layout — one plugin per leak type</span></div><pre><code class='language-plaintext'>reclaim/
+├── detectors/          failed_payments · abandoned_carts
+│                       failed_mandates · overdue_invoices
+├── brain/
+│   ├── rules.py        THE single rule loader
+│   ├── diagnosis/      deterministic · cohort · llm · receivables
+│   ├── policy/         policies.yaml + engine.py
+│   └── guardrails/     base.py + rules/ (one file per rule)
+├── executor/           razorpay_client · actions · channels
+├── webhooks/           signature · attribution
+├── audit/              append-only decision log
+├── experiments/        ablation.py
+└── api/                FastAPI routes
+
+tests/                  342 tests, 3 property invariants
+ui/                     Next.js dashboard, 8 screens</code></pre></div>
+<div class='card' id='C09'><div class='hdr'><span class='path'>reclaim/brain/diagnosis/deterministic.py</span><span class='note'>Layer 1 — free, instant, confidence 1.0</span></div><pre><code class='language-python'>&quot;&quot;&quot;Layer 1: lookup table. Free, instant, confidence 1.0.
+
+Keys are the literal strings Razorpay puts in `error.reason`, with `error.code`
+as a coarser fallback. They are matched exactly and lowercased — a near-miss is
+a silent miss, which is why `cli verify` checks this map against the fixture that
+`cli harvest` writes rather than trusting it by eye.
+
+The deliberate omission is the generic decline family — payment_failed,
+payment_declined, card_declined. Those cover insufficient funds, a risk decline
+and a daily-limit breach at once, so resolving them here would be guessing. They
+fall through to layer 2 on purpose.
+&quot;&quot;&quot;
+
+    # transient issuer / gateway problems
+    &quot;gateway_technical_error&quot;: RootCause.BANK_DOWNTIME,
+    &quot;bank_not_available&quot;: RootCause.BANK_DOWNTIME,
+    &quot;bank_technical_error&quot;: RootCause.BANK_DOWNTIME,
+    &quot;bank_cutoff_in_progress&quot;: RootCause.BANK_DOWNTIME,
+    &quot;payment_declined_due_to_high_traffic&quot;: RootCause.BANK_DOWNTIME,
+    # the instrument itself is unusable
+    &quot;card_expired&quot;: RootCause.EXPIRED_INSTRUMENT,
+    &quot;incorrect_card_details&quot;: RootCause.INVALID_INSTRUMENT,
+    &quot;card_number_invalid&quot;: RootCause.INVALID_INSTRUMENT,</code></pre></div>
+<div class='card' id='C10'><div class='hdr'><span class='path'>reclaim/brain/diagnosis/cohort.py</span><span class='note'>Layer 1.5 — computed over the batch, before diagnosis</span></div><pre><code class='language-python'>&quot;&quot;&quot;Layer 1.5: the cohort signal.
+
+One record saying &quot;declined by the bank&quot; is a customer problem. Forty records
+saying it, all on one issuer, all inside one hour, is an issuer problem — and the
+correct response inverts completely: retry quietly in twenty minutes and tell the
+customer nothing, rather than SMS-blasting people to top up an account that was
+never short.
+
+Computed over the whole batch BEFORE diagnosis, because a per-record view cannot
+see it by construction.
+&quot;&quot;&quot;
+
+
+
+# Above this multiple of the merchant&#x27;s baseline, an issuer is having an outage
+# rather than a bad afternoon. Deliberately conservative: a false BANK_DOWNTIME
+# means we stay silent on a customer who genuinely needed telling.
+OUTAGE_RATIO = 4.0
+MIN_FAILURES_FOR_SIGNAL = 5
+</code></pre></div>
+<div class='card' id='C11'><div class='hdr'><span class='path'>reclaim/brain/diagnosis/llm_diagnoser.py</span><span class='note'>Layer 2 — the model, on the ambiguous rest only</span></div><pre><code class='language-python'>&quot;&quot;&quot;Layer 2: the model, on the ~40% of records an error string cannot resolve.
+
+Forced tool use, because a closed schema is what makes hallucination harmless:
+the model cannot invent a root cause, only pick a wrong one from a fixed list —
+and the policy table and guardrails below it still hold either way.
+
+Four cost controls, all required for a 120-record batch to finish in seconds:
+signature caching (identical error shapes are one call, not forty), request
+batching (the surviving records go up ten to a call, because a free tier meters
+requests and not records), a semaphore so we do not open 120 sockets at once,
+and a fallback chain that degrades to UNKNOWN rather than failing the batch.
+
+The model NEVER decides the action, the amount, the timing or the recipient.
+It returns a label and a confidence. That is the entire contract.
+
+
+    def __init__(self, client=None, model: str = &quot;&quot;) -&gt; None:
+        self.model = model
+        self._semaphore = threading.Semaphore(MAX_CONCURRENCY)
+        self._cache: dict[str, Any] = {}
+        self._lock = threading.Lock()
+        self.calls = 0
+        self.cache_hits = 0
+        self._client = client
+</code></pre></div>
+<div class='card' id='C12'><div class='hdr'><span class='path'>reclaim/brain/policy/policies.yaml</span><span class='note'>Rules are data — this row is REC_5042&#x27;s silent retry</span></div><pre><code class='language-yaml'># Policy table. Rules are DATA, not code — V2 swaps this file for a DB table
+# without touching diagnosis, policy or guardrail logic.
+#
+# Keyed by leak_type, then root_cause. Every row states a rationale, because the
+# audit trail quotes it back and &quot;why did it do that?&quot; must have an answer that
+# was written before the run, not after.
+#
+# Five rows are no_auto_action. That is deliberate and it is the differentiator:
+# knowing when the right move is to stop and fetch a human is what separates this
+# from something that always acts.
+
+FAILED_PAYMENT:
+
+  BANK_DOWNTIME:
+    strategy: silent_retry
+    schedule: [&quot;20m&quot;, &quot;2h&quot;, &quot;24h&quot;]
+    max_attempts: 3
+    notify_customer: false
+    rationale: &gt;-
+      Transient issuer outage. The customer did nothing wrong and can do nothing
+      about it; contacting them creates needless alarm and support load.
+</code></pre></div>
+<div class='card' id='C13'><div class='hdr'><span class='path'>reclaim/brain/guardrails/base.py</span><span class='note'>14 rules, one file each — and two non-negotiables</span></div><pre><code class='language-python'>&quot;&quot;&quot;Guardrail engine.
+
+Guardrails know nothing about root causes, policies or models. They answer one
+question: may THIS action fire, right now, against THIS customer?
+
+Two properties are non-negotiable and both are tested:
+
+  * evaluate_all NEVER raises. Malformed input blocks the action; it does not
+    throw. A guardrail that throws is one somebody eventually wraps in
+    `except: pass` and silently skips, and then it is not a guardrail.
+  * ALL guardrails run, always. Collecting every violation rather than
+    short-circuiting on the first is what makes the audit trail worth reading.
+
+Blocked is not dropped. Every violation carries what happens next: a time to
+retry, a human to route to, or a permanent stop.
+&quot;&quot;&quot;
+</code></pre></div>
+<div class='card' id='C14'><div class='hdr'><span class='path'>reclaim/models.py  ·  reclaim/executor/actions.py</span><span class='note'>Derived, never passed in — and claimed BEFORE the charge</span></div><pre><code class='language-python'>    @property
+    def idempotency_key(self) -&gt; str:
+        &quot;&quot;&quot;The single most important property in the system. Derived, never passed
+        in, so it cannot drift from the tuple it is supposed to represent.&quot;&quot;&quot;
+        return f&quot;{self.record_id}:{self.attempt_number}:{self.action_type.value}&quot;
+
+
+&quot;&quot;&quot;Executes a permitted action.
+
+Two things happen in a strict order, and the order is the whole guarantee:
+
+  1. Claim the idempotency key by INSERTing into executed_actions.
+  2. Only then call Razorpay.
+
+Claiming first means a crash between the two leaves a claimed key and no charge —
+the safe failure. Calling first would risk a charge with no record of it, and on
+resume we would charge again. Payments systems are allowed to under-deliver on a
+retry; they are not allowed to double-charge.
+
+The UNIQUE constraint on idempotency_key is what makes step 1 atomic. Two
+processes racing the same action have exactly one winner.
+&quot;&quot;&quot;</code></pre></div>
+<script>hljs.highlightAll();</script>

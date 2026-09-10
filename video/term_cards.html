@@ -1,0 +1,90 @@
+<meta charset='utf-8'>
+<link href='https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600&family=JetBrains+Mono:wght@400;600;700&display=swap' rel='stylesheet'>
+<style>
+:root{--bg:#0b0d10;--ink:#d8e0e8;--dim:#8b97a6;--green:#34d399;--amber:#fbbf24;--red:#f87171}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#333;font-family:'JetBrains Mono',ui-monospace,monospace}
+.card{width:1920px;height:1080px;background:var(--bg);color:var(--ink);
+      padding:52px 66px;display:flex;flex-direction:column;overflow:hidden}
+.hdr{display:flex;align-items:baseline;border-bottom:1px solid #262d36;
+     padding-bottom:18px;margin-bottom:26px}
+.hdr .t{font-family:'Plus Jakarta Sans',system-ui,sans-serif;font-size:25px;
+        font-weight:600;color:var(--dim);margin-left:auto}
+.hdr .dot{width:13px;height:13px;border-radius:50%;margin-right:9px;display:inline-block}
+.prompt{color:var(--green);font-size:24px;font-weight:600;margin:22px 0 10px}
+.prompt .sig{color:var(--dim)}
+pre{font-size:20.5px;line-height:1.52;white-space:pre-wrap;word-break:break-word}
+.g{color:var(--green)} .r{color:var(--red)} .y{color:var(--amber)}
+.c{color:#7cc4ff} .b{font-weight:700;color:#fff} .d{color:var(--dim)}
+</style>
+<div class='card' id='C23'><div class='hdr'><span class='dot' style='background:#f87171'></span><span class='dot' style='background:#fbbf24'></span><span class='dot' style='background:#34d399'></span><span class='t'>The receipts</span></div><div class='prompt'><span class='sig'>$</span> pytest -q</div><pre>402 passed, 1 warning in 317.60s (0:05:17)
+</pre><div class='prompt'><span class='sig'>$</span> reclaim verify</div><pre>        <span class="d">1 settled record(s) still open in the queue: INV_7059</span>
+  <span class="g">PASS</span>  self-cure is the same in both arms
+        <span class="d">34 of 180 would have paid unprompted, identical every run and in every arm</span>
+  <span class="g">PASS</span>  what-if replay leaves no trace
+        <span class="d">3848 rows and the demo clock unchanged across a full two-arc replay</span>
+  <span class="g">PASS</span>  visitor records stay out of the published figures
+        <span class="d">a ₹99,000 visitor record moved no published figure and landed in its own bucket</span>
+  <span class="g">PASS</span>  sandbox preview leaves no trace
+        <span class="d">5 previews wrote no row and moved no clock</span>
+  <span class="g">PASS</span>  dashboard is built and servable
+        <span class="d">ui/out/index.html present (24 KB), newer than every file in ui/src</span>
+
+  27 passed, 1 failed, 0 pending
+
+</pre></div>
+<div class='card' id='C24'><div class='hdr'><span class='dot' style='background:#f87171'></span><span class='dot' style='background:#fbbf24'></span><span class='dot' style='background:#34d399'></span><span class='t'>Razorpay unreachable, and a crash mid-batch</span></div><div class='prompt'><span class='sig'>$</span> reclaim run-batch --kill-razorpay</div><pre>  failed               21
+  escalated            12
+  messages sent         0
+  not yet due           2
+
+  <span class="b">outcomes attributed via signed webhooks</span>
+    recovered       <span class="g">    0</span>  ₹0
+    no response         0
+    failed again        0
+
+     quiet_hours            74
+     confidence_floor       67
+     value_ceiling          11
+     consent                 7
+     dnd                     3
+
+  <span class="y">Razorpay was unreachable for this run.</span> 21 writes failed and were parked for review; the batch still completed and no key executed twice.
+
+</pre><div class='prompt'><span class='sig'>$</span> reclaim prove-idempotency</div><pre>
+<span class="b">IDEMPOTENCY UNDER CRASH</span>
+
+  1. <span class="y">Simulated crash after 33 actions. The batch is resumable: re-run and every claimed key will be skipped.</span>
+  2. keys claimed before the crash: <span class="b">8</span>
+  3. resumed — guardrail #10 blocked <span class="b">0</span> replays before they reached Razorpay
+
+     executed_actions rows      21
+     distinct keys              21
+     <span class="b">duplicate keys</span>          <span class="g">    0</span>
+
+  <span class="g">No action executed twice. The UNIQUE constraint on idempotency_key makes it impossible.</span>
+
+</pre></div>
+<div class='card' id='C25'><div class='hdr'><span class='dot' style='background:#f87171'></span><span class='dot' style='background:#fbbf24'></span><span class='dot' style='background:#34d399'></span><span class='t'>The baseline, including where we lose</span></div><div class='prompt'><span class='sig'>$</span> reclaim baseline</div><pre>  rate by value                          42.4%         24.5%
+  rate by record                         45.0%         38.3%
+  customer contacts                        418           169
+  contacts per recovery                   5.16          2.45
+  contacts to opted-out                     44             0
+  contacts on DND                           66             0
+  contacts in quiet hours                  330             0
+  retries on never-retry causes             30             0
+
+  <span class="r">The naive strategy commits 729 contacts the guardrail engine refuses.</span>
+
+<span class="b">WHERE THE NAIVE STRATEGY WINS, AND WHY</span>
+  <span class="d">It recovers ₹23,52,777 we do not. Every rupee of it is accounted for:</span>
+
+     11    ₹12,33,478   customer opted out or on DND - contact refused
+      3     ₹8,59,448   above the value ceiling - routed to a human
+      2       ₹12,104   still in flight - deferred, not abandoned
+      7     ₹2,47,747   our strategy simply did worse here
+
+    <span class="b">₹20,92,926</span> of that is money the agent was told not to take.
+    ₹12,104 is still in flight - deferred, not abandoned.
+
+</pre></div>

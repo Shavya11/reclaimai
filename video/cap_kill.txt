@@ -1,0 +1,18 @@
+  failed               21
+  escalated            12
+  messages sent         0
+  not yet due           2
+
+  [1moutcomes attributed via signed webhooks[0m
+    recovered       [32m    0[0m  ₹0
+    no response         0
+    failed again        0
+
+     quiet_hours            74
+     confidence_floor       67
+     value_ceiling          11
+     consent                 7
+     dnd                     3
+
+  [33mRazorpay was unreachable for this run.[0m 21 writes failed and were parked for review; the batch still completed and no key executed twice.
+

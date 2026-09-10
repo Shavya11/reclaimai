@@ -43,6 +43,7 @@ const GUARDRAIL_BLURB: Record<string, string> = {
   state_validity: "record no longer actionable",
   confidence_floor: "diagnosis below 0.6",
   freshness: "older than 90 days",
+  promise_window: "a promise to pay is open",
 };
 
 // The registered set is fixed and lives one file per rule in the backend. The
