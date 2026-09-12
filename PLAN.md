@@ -683,6 +683,105 @@ ladder. Each is an endpoint plus a config object against a component that will
 already exist — which is the point of building it this way, and the reason none of
 them are urgent.
 
+## Day 8 — the brief, re-read as a judge
+
+The submission is in; judging is off the repository, with a presentation if
+selected. So the repo was audited cold against the Track 03 brief's four jury
+questions — *where does the loop close, how was the money measured, when does
+the agent stop, show one full case* — by reading code rather than docs, and
+every load-bearing claim was re-verified against source and the shipped
+database. Restore point: tag `pre-report-baseline`.
+
+### Phase 1 — the repo as a judge reads it
+
+- [x] **README denied its own best evidence.** "Layer 2 has never run live" and
+      "no webhook has arrived from Razorpay" were both false — the README was
+      last committed five hours before `evidence/webhook.json`. The real
+      delivery is now the first row of the claims table.
+- [x] **Overclaim caught and removed.** The first correction implied ₹683 of the
+      headline was Razorpay-confirmed. It is not: that delivery hit a record
+      the snapshot had already settled and read `ALREADY_ATTRIBUTED`. README
+      and DEMO.md now say none of the ₹27,44,651 is confirmed, and that what
+      the delivery proves is the path.
+- [x] **Three "recovered" figures were in circulation**, all labelled seed 42,
+      each hand-copied from a different run. Every published number now comes
+      from one state: the baseline table, the gap breakdown, `evidence/*.json`,
+      DSO (146.5→133.6, not 132.5→119.5), escalations (51), still-open,
+      written-off. A verify check pins the README headline to the scoreboard.
+- [x] `cli detect --leak-types` — documented, did not exist. Reproduces the V1
+      figure exactly: 120 records, ₹8,24,984.
+- [x] `pyproject.toml` with a `reclaim` console script, so every `reclaim
+      <cmd>` in the docs, `render.yaml` and the evidence files is a real command.
+- [x] Counts: 14 guardrails (was 13 in three places), 17 causes (was "twelve"),
+      30 verify checks (was 24/25/28 in three places), 37 map keys (was 42).
+
+### Phase 2 — the demo script
+
+- [x] **Three of the four records DEMO.md stops on had none of the narrated
+      properties.** `REC_5042` (narrated as the HDFC outage) is Kotak
+      netbanking; `REC_5001` (narrated as ₹1,47,603 above the ceiling) is
+      ₹8,686; `REC_5015` (narrated as opted out) has `opted_out = 0`. The
+      generator was re-drawn the day after the script was written. Now
+      `REC_5001` / `REC_5100` / `REC_5003` — and `REC_5001` is the record the
+      video's C18 clip actually opens on screen. A verify check pins all three.
+- [x] Beat 2 told the presenter to press Run batch; the same file forbade it.
+- [x] **`cli verify` failed on a fresh clone** — `INV_7059` settled but still
+      queued. A fresh arc leaves zero stuck rows, so the code was right and the
+      committed snapshot was stale. One row corrected; the fixture now matches
+      the README's "51 raised, 1 self-resolved", which had been right all along.
+
+### Phase 3 — what the video promises that the code did not keep
+
+- [x] **The idempotency key never reached Razorpay.** C14 says "every write to
+      Razorpay carries an idempotency key… cannot double-charge." No `receipt`,
+      no `reference_id`, and the retry loop sat below the local claim — one
+      execution could create three orders. Now `receipt` on orders,
+      `reference_id` on links (Razorpay enforces it unique), the retry looks
+      the key up before re-sending, and if the lookup itself fails it refuses
+      to re-send rather than guess. `tests/test_idempotency_on_the_wire.py`
+      asserts the payload, not the transcript — the gap that let this be
+      false without a test noticing.
+- [x] **DND dead-ended.** C13 says "every refusal computes when it may be
+      reconsidered." DND carried no next step, so three records were
+      re-proposed and re-refused every tick: 36 refusals for 3 decisions, the
+      fingerprint visible in the README's own restraint table. Now routes to a
+      person; a fresh run refuses each exactly once.
+- [x] **No message told the customer how to opt out.** The system honoured
+      STOP and never advertised it. `render()` appends it to every template;
+      `send()` refuses a message over the channel limit instead of truncating
+      mid-link.
+- [x] **Thirteen POST endpoints answered anyone**, including the kill switch
+      and `/api/admin/reset`, live on the public instance. `ADMIN_TOKEN` in
+      `X-Admin-Token`; with none configured, loopback only — a laptop demo
+      needs nothing, a deployment that forgot the variable is locked. The
+      dashboard asks once per tab; the token is never in the bundle. The kill
+      switch is persisted, so a restart cannot re-arm the agent.
+- [x] `/api/health` named `claude-sonnet-5` with no Anthropic key. Names the
+      model that will answer.
+- [ ] Deferred, invisible from a demo: `daily_budget` is per-batch not per-day;
+      `frequency_cap.window_days` drifts if edited; settlement self-signs an
+      outcome for a real link under `--live`.
+
+### Phase 4 — the credibility play
+
+- [x] **`cli trace <record_id>`** — the brief's worked-example request as a
+      command: detect → diagnose → decide → guardrail → execute → webhook → ₹,
+      read from storage, one screen, with `simulated` reported per event.
+- [x] **The scoreboard splits the headline** into confirmed-by-Razorpay and
+      modelled, read off the webhook rows. The shipped batch reads ₹0 confirmed
+      / ₹27,44,651 modelled, and says so on the dashboard and in the README.
+      `confirmed + modelled == recovered`, asserted.
+- [ ] The Mandate Retry Sequencer has a full ladder and zero records that
+      reach it. On a separate RNG stream, as V2 did for invoices, so no
+      published figure moves.
+
+### Phase 5 — last, by request
+
+- [ ] Grow the real-money evidence past ₹683 with a live test-mode run.
+
+**Not re-run, deliberately:** the ablation. The video quotes 412 consultations
+/ 38 calls from `docs/RESULTS.md`; a fresh run would produce a third figure.
+
 ## Non-negotiables (if everything else burns down)
 
 1. Guardrail test suite green

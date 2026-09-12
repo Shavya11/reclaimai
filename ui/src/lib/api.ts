@@ -24,7 +24,55 @@ class HttpError extends Error {
   }
 }
 
+// Rule edits, the kill switch and resets need an admin token. It is never in
+// this bundle - a public static site cannot keep a secret - so the operator is
+// asked for it once and it lives in sessionStorage for the tab. Reads never
+// need it; sending it on every request is harmless and keeps this to one place.
+const TOKEN_KEY = "reclaim.adminToken";
+const TOKEN_HEADER = "X-Admin-Token";
+
+function adminToken(): string | null {
+  try {
+    return sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function askForAdminToken(): string | null {
+  const entered = window.prompt(
+    "This action changes the agent's rules or state and needs the admin token. " +
+      "It is the ADMIN_TOKEN the server was started with.",
+  );
+  const token = entered?.trim() || null;
+  try {
+    if (token) sessionStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // Storage blocked: the token still works for this one request.
+  }
+  return token;
+}
+
+function withToken(init: RequestInit, token: string | null): RequestInit {
+  if (!token) return init;
+  return { ...init, headers: { ...(init.headers ?? {}), [TOKEN_HEADER]: token } };
+}
+
 async function request<T>(path: string, init: RequestInit, timeout: number): Promise<T> {
+  try {
+    return await requestOnce<T>(path, withToken(init, adminToken()), timeout);
+  } catch (e) {
+    // 401 means "token required or wrong". Ask once and retry; a second 401
+    // is the caller's problem to show.
+    if (e instanceof HttpError && e.status === 401) {
+      const token = askForAdminToken();
+      if (token) return requestOnce<T>(path, withToken(init, token), timeout);
+    }
+    throw e;
+  }
+}
+
+async function requestOnce<T>(path: string, init: RequestInit, timeout: number): Promise<T> {
   // AbortSignal.timeout is not in every browser a demo might be opened in, so
   // fall back to a controller rather than throwing on the feature test itself.
   const controller = new AbortController();
@@ -93,6 +141,14 @@ export type Scoreboard = {
   unrecoverable_paise: number;
   at_risk_display: string;
   recovered_display: string;
+  // The headline, split by who said the money arrived. They sum to recovered.
+  // Optional for the reason the receivables fields are: an older API must not
+  // break the page.
+  confirmed_paise?: number;
+  confirmed_records?: number;
+  confirmed_display?: string;
+  modelled_paise?: number;
+  modelled_display?: string;
   open_display: string;
   unrecoverable_display: string;
   at_risk_short: string;

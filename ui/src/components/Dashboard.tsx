@@ -240,6 +240,24 @@ export default function Dashboard({
               money detected.
             </p>
           )}
+          {/* Who said the money arrived. Never one number without the other:
+              the first question about a hackathon figure is which of these it
+              is, and the answer here is read off the webhook rows, not asserted. */}
+          {board.confirmed_display != null && (
+            <p className="mt-3 text-[11px] text-muted">
+              Of the {board.recovered_display} recovered,{" "}
+              <span className={(board.confirmed_paise ?? 0) > 0 ? "font-medium text-green" : "font-medium"}>
+                {board.confirmed_display} confirmed by a Razorpay delivery
+              </span>
+              {(board.confirmed_records ?? 0) > 0
+                ? ` (${board.confirmed_records} record${board.confirmed_records === 1 ? "" : "s"})`
+                : ""}
+              {" · "}
+              <span className="font-medium">{board.modelled_display} modelled</span> — the
+              outcome simulator decided who paid, walked through the real attribution
+              chain. Every webhook row carries <code>simulated</code>; this reads it.
+            </p>
+          )}
         </Card>
       </div>
 

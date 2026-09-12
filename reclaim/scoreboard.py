@@ -34,6 +34,7 @@ from .db import (
     HumanQueueRow,
     InterventionRow,
     SessionLocal,
+    WebhookEventRow,
     init_db,
 )
 from .enums import LeakType, NEVER_RETRY, RecordState, RootCause, Stage
@@ -88,6 +89,14 @@ class Scoreboard:
     recovered_records: int = 0
     open_records: int = 0
     unrecoverable_records: int = 0
+    # The headline, split by who said the money arrived. `confirmed` is
+    # recovered money whose webhook Razorpay actually delivered; `modelled` is
+    # the outcome simulator's. The two sum to `recovered_paise`; they are never
+    # reported as one number without the other, because a judge's first
+    # question about a hackathon figure is which of these it is.
+    confirmed_paise: int = 0
+    confirmed_records: int = 0
+    modelled_paise: int = 0
     by_root_cause: list[CauseLine] = field(default_factory=list)
     guardrails_fired: dict[str, int] = field(default_factory=dict)
     guardrails_records: dict[str, int] = field(default_factory=dict)
@@ -181,6 +190,11 @@ class Scoreboard:
             "unrecoverable_paise": self.unrecoverable_paise,
             "at_risk_display": format_inr(self.at_risk_paise),
             "recovered_display": format_inr(self.recovered_paise),
+            "confirmed_paise": self.confirmed_paise,
+            "confirmed_records": self.confirmed_records,
+            "confirmed_display": format_inr(self.confirmed_paise),
+            "modelled_paise": self.modelled_paise,
+            "modelled_display": format_inr(self.modelled_paise),
             "open_display": format_inr(self.open_paise),
             "unrecoverable_display": format_inr(self.unrecoverable_paise),
             "at_risk_short": format_inr_short(self.at_risk_paise),
@@ -261,6 +275,17 @@ def compute(label: str = "ReclaimAI") -> Scoreboard:
             .group_by(InterventionRow.record_id).all()
         ):
             recovered_by_record[record_id] = int(amount or 0)
+
+        # A record is "confirmed" when at least one non-simulated webhook
+        # event attributed to it. One query, one set, so the split costs
+        # nothing per row.
+        confirmed_ids = {
+            rid for (rid,) in session.query(WebhookEventRow.record_id)
+            .filter(WebhookEventRow.simulated.is_(False))
+            .filter(WebhookEventRow.record_id.isnot(None))
+            .filter(WebhookEventRow.outcome.in_(("PROCESSED", "ALREADY_ATTRIBUTED")))
+            .distinct().all()
+        }
 
         contacts_by_record: Counter = Counter()
         for record_id, n in (
@@ -360,6 +385,11 @@ def compute(label: str = "ReclaimAI") -> Scoreboard:
         elif row.state == RecordState.RECOVERED.value and recovered:
             board.recovered_records += 1
             board.recovered_paise += recovered
+            if row.id in confirmed_ids:
+                board.confirmed_records += 1
+                board.confirmed_paise += recovered
+            else:
+                board.modelled_paise += recovered
             line.recovered_records += 1
             line.recovered_paise += recovered
             # A part payment recovers part of the record. The rest is still

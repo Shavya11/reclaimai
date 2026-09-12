@@ -50,6 +50,45 @@ def test_every_rupee_lands_in_exactly_one_bucket():
             + board.unrecoverable_paise) == board.at_risk_paise
 
 
+def test_recovered_money_is_split_by_who_confirmed_it():
+    """The headline is never one number. Confirmed (Razorpay delivered the
+    webhook) plus modelled (the simulator did) is the recovered figure, and in
+    DRY_RUN every rupee is modelled - the split must say so rather than let a
+    reader assume."""
+    run_batch(dry_run=True)
+    board = compute()
+    assert board.confirmed_paise + board.modelled_paise == board.recovered_paise
+    assert board.confirmed_paise == 0, "DRY_RUN produced a non-simulated webhook?"
+    assert board.confirmed_records == 0
+    d = board.as_dict()
+    assert d["confirmed_display"] == "₹0"
+    assert d["modelled_display"] == d["recovered_display"]
+
+
+def test_a_real_delivery_moves_money_into_the_confirmed_column():
+    """Flip one attributed event to `simulated = False` - what a genuine
+    Razorpay delivery stores - and exactly that record's money moves."""
+    from reclaim.db import WebhookEventRow
+
+    run_batch(dry_run=True)
+    before = compute()
+    with SessionLocal() as session:
+        event = (session.query(WebhookEventRow)
+                 .filter(WebhookEventRow.outcome == "PROCESSED")
+                 .filter(WebhookEventRow.record_id.isnot(None)).first())
+        rid = event.record_id
+        event.simulated = False
+        session.commit()
+        moved = sum(i.recovered_amount or 0 for i in session.query(InterventionRow)
+                    .filter(InterventionRow.record_id == rid,
+                            InterventionRow.result == RESULT_RECOVERED))
+    after = compute()
+    assert after.recovered_paise == before.recovered_paise, "the total must not move"
+    assert after.confirmed_paise == moved
+    assert after.confirmed_records == 1
+    assert after.modelled_paise == before.recovered_paise - moved
+
+
 def test_every_record_lands_in_exactly_one_bucket():
     run_batch(dry_run=True)
     board = compute()

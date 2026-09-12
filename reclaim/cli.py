@@ -40,7 +40,18 @@ def cmd_seed(args) -> int:
 
 def cmd_detect(args) -> int:
     init_db()
-    records = detect_all(REGISTRY)
+    detectors = REGISTRY
+    if args.leak_types:
+        wanted = {t.strip().upper() for t in args.leak_types.split(",") if t.strip()}
+        known = {d.leak_type.value for d in REGISTRY}
+        unknown = wanted - known
+        if unknown:
+            print(f"unknown leak type(s): {', '.join(sorted(unknown))}\n"
+                  f"known: {', '.join(sorted(known))}")
+            return 2
+        detectors = [d for d in REGISTRY if d.leak_type.value in wanted]
+
+    records = detect_all(detectors)
     total = sum(r.amount for r in records)
     by_type = Counter(r.leak_type.value for r in records)
 
@@ -63,7 +74,7 @@ def cmd_detect(args) -> int:
     for name, count in by_type.most_common():
         amt = sum(r.amount for r in records if r.leak_type.value == name)
         print(f"  {name:<18} {count:>4}   {format_inr(amt):>14}")
-    print(f"\n{DIM}detectors: {', '.join(d.name for d in REGISTRY)}{OFF}")
+    print(f"\n{DIM}detectors: {', '.join(d.name for d in detectors)}{OFF}")
     return 0
 
 
@@ -384,6 +395,10 @@ def _scoreboard_lines(board, indent: str = "  ") -> list[str]:
         f"{indent}{'Money recovered':<28}{GREEN}{d['recovered_display']:>14}{OFF}"
         f"   ({d['recovery_rate']:.1%} by value, "
         f"{d['record_recovery_rate']:.1%} by record)",
+        f"{indent}{'  confirmed by Razorpay':<28}{d['confirmed_display']:>14}"
+        f"   {DIM}({d['confirmed_records']} record(s), webhook not simulated){OFF}",
+        f"{indent}{'  modelled outcome':<28}{d['modelled_display']:>14}"
+        f"   {DIM}(simulator decided, real attribution chain){OFF}",
         f"{indent}{'Still open':<28}{d['open_display']:>14}",
         f"{indent}{'Written off / unrecoverable':<28}{d['unrecoverable_display']:>14}"
         f"   {DIM}(never-retry causes, escalated not chased){OFF}",
@@ -984,6 +999,107 @@ def cmd_rules(args) -> int:
     return 0
 
 
+def cmd_trace(args) -> int:
+    """The brief's worked example: one record, detection to confirmed money,
+    on one screen. Read from storage, never recomputed."""
+    from .trace import trace
+
+    init_db()
+    data = trace(args.record_id)
+    if data is None:
+        print(f"no record {args.record_id} - try `cli demo` first, or a real id "
+              f"from `cli detect`")
+        return 1
+    if args.json:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+        return 0
+
+    rec, cust, money = data["record"], data["customer"], data["money"]
+    print()
+    print(f"{BOLD}TRACE  {rec['id']}{OFF}  {DIM}{rec['leak_type']} · "
+          f"{rec['amount']} · now {rec['state']}{OFF}")
+    print()
+
+    # 1. detect
+    print(f"  {BOLD}DETECT{OFF}      {rec['detected_at'] or '?'}")
+    line = [x for x in (rec['issuer_bank'], rec['method']) if x]
+    if line:
+        print(f"              {' · '.join(line)}")
+    if rec['error_reason']:
+        print(f"              error: {rec['error_reason']}"
+              + (f' — "{rec["error_description"]}"' if rec['error_description'] else ""))
+    if cust:
+        flags = [f for f, on in (("opted out", cust['opted_out']), ("on DND", cust['on_dnd'])) if on]
+        print(f"              customer {cust['id']}"
+              + (f"  {RED}{', '.join(flags)}{OFF}" if flags else ""))
+    print()
+
+    # 2-5. the recorded trail, stage by stage
+    colour = {"ALLOWED": GREEN, "EXECUTED": GREEN, "RECOVERED": GREEN,
+              "BLOCKED": RED, "STOPPED": RED, "FAILED": RED,
+              "SCHEDULED": DIM, "SKIPPED_IDEMPOTENT": YELLOW}
+    for row in data["trail"]:
+        c = colour.get(row["outcome"], "")
+        who = f" {DIM}[{row['guardrail']}]{OFF}" if row["guardrail"] else ""
+        when = (row["at"] or "")[:16].replace("T", " ")
+        print(f"  {DIM}{when}{OFF}  {row['stage']:<9} {c}{row['outcome']:<18}{OFF}{who}")
+        if row["reason"]:
+            print(f"              {DIM}{_wrap(row['reason'], 76)}{OFF}")
+        extra = []
+        pl = row["payload"]
+        if pl.get("idempotency_key"):
+            extra.append(f"key {pl['idempotency_key']}")
+        if pl.get("razorpay_ref"):
+            extra.append(f"ref {pl['razorpay_ref']}")
+        if pl.get("confidence") is not None:
+            extra.append(f"confidence {pl['confidence']}")
+        if pl.get("source"):
+            extra.append(f"source {pl['source']}")
+        if row["deferred_until"]:
+            extra.append(f"until {row['deferred_until'][:16].replace('T', ' ')}")
+        if extra:
+            print(f"              {DIM}{' · '.join(extra)}{OFF}")
+    print()
+
+    # 6. the money, and whether Razorpay said so
+    print(f"  {BOLD}WEBHOOKS{OFF}    {len(data['webhooks'])} event(s)")
+    for e in data["webhooks"]:
+        tag = (f"{GREEN}real{OFF}" if not e["simulated"] else f"{DIM}modelled{OFF}")
+        print(f"              {e['event_type']:<20} {e['outcome']:<20} "
+              f"{format_inr(e['amount_paise']):>12}  {tag}  {DIM}{e['razorpay_ref']}{OFF}")
+    if data["human_queue"]:
+        print()
+        print(f"  {BOLD}HUMAN QUEUE{OFF}")
+        for q in data["human_queue"]:
+            state = f"{GREEN}resolved{OFF}" if q["resolved_at"] else f"{YELLOW}open{OFF}"
+            print(f"              {state}  {DIM}{_wrap(q['reason'], 70)}{OFF}")
+    if data["promises"]:
+        print()
+        print(f"  {BOLD}PROMISES{OFF}")
+        for pr in data["promises"]:
+            print(f"              {pr['state']:<7} for {(pr['promised_for'] or '')[:10]}"
+                  f"  {DIM}“{pr['reply_text']}”{OFF}")
+    print()
+    if money["confirmed_by_razorpay"]:
+        verdict = f"{GREEN}confirmed by Razorpay{OFF}"
+    elif money["recovered_paise"]:
+        verdict = f"{DIM}modelled outcome, real attribution chain{OFF}"
+    else:
+        verdict = f"{DIM}nothing recovered yet{OFF}"
+    print(f"  {BOLD}MONEY{OFF}       {money['recovered']} of {rec['amount']} recovered  "
+          f"·  {verdict}")
+    print(f"              {DIM}{money['real_events']} real event(s), "
+          f"{money['modelled_events']} modelled{OFF}")
+    print()
+    return 0
+
+
+def _wrap(text: str, width: int) -> str:
+    import textwrap
+
+    return "\n              ".join(textwrap.wrap(text, width))
+
+
 def cmd_promises(args) -> int:
     """The promise book. Open promises are the agent deliberately silent, which
     is the one thing a dashboard cannot render as activity."""
@@ -1088,6 +1204,7 @@ def main(argv: list[str] | None = None) -> int:
         ("rules", cmd_rules, "show the rule table, shipped vs edited"),
         ("evidence", cmd_evidence, "run each proof once and commit the result"),
         ("promises", cmd_promises, "the promise-to-pay book"),
+        ("trace", cmd_trace, "one record, detection to confirmed money, on one screen"),
     ]:
         sp = subs.add_parser(name, help=helptext)
         sp.add_argument("--json", action="store_true", help="machine-readable output")
@@ -1100,6 +1217,13 @@ def main(argv: list[str] | None = None) -> int:
     subs.choices["harvest"].add_argument(
         "--collect", action="store_true",
         help="fetch failed payments and write the fixture (default: mint links)")
+
+    subs.choices["trace"].add_argument("record_id", help="e.g. REC_5001 or INV_7059")
+
+    subs.choices["detect"].add_argument(
+        "--leak-types", default=None,
+        help="comma-separated subset, e.g. FAILED_PAYMENT,ABANDONED_CART — "
+             "how the V1 figures are reproduced from a V2 batch")
 
     rb = subs.choices["run-batch"]
     rb.add_argument("--crash-at", type=int, default=None,
