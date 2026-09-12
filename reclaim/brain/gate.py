@@ -63,6 +63,17 @@ class GateReport:
         }
 
 
+def _policy_max_attempts(policy_ref: str, policy_for, default: int = 3) -> int:
+    """The row's own ceiling. It was the literal 3 - true for most rows and
+    quietly wrong for any row that said otherwise."""
+    leak, _, cause = policy_ref.partition(".")
+    row = policy_for(leak, cause) or {}
+    try:
+        return int(row.get("max_attempts", default))
+    except (TypeError, ValueError):
+        return default
+
+
 def run(
     records: list[AtRiskRecord],
     diagnoses: dict[str, Diagnosis],
@@ -86,9 +97,14 @@ def run(
     # Seeded from what was actually executed, so the seven-day window survives a
     # process restart. An in-memory-only tally makes guardrail #7 true per run
     # rather than per customer.
-    from ..repository import contact_history
+    from ..repository import actions_today as actions_already_today, contact_history
+    from .rules import policy_for, threshold
 
-    prior_counts, prior_last = contact_history(frm)
+    # The window the cap COUNTS over must be the window it claims. Editing
+    # `window_days` in the rules studio used to change the deferral but not
+    # the count - a 14-day deferral computed off a 7-day tally.
+    window = int(threshold("frequency_cap", "window_days", default=7))
+    prior_counts, prior_last = contact_history(frm, window_days=window)
 
     # One query for the whole batch. Guardrail 14 is evaluated per action, and
     # a promise lookup per action would be 180 round trips to answer a question
@@ -99,7 +115,7 @@ def run(
 
     contacts: Counter = Counter(prior_counts)
     last_contact: dict[str, datetime] = dict(prior_last)
-    actions_today = 0
+    actions_today = actions_already_today(frm)
     report = GateReport()
 
     for action in actions:
@@ -119,7 +135,7 @@ def run(
             record_age_days=max(0.0, (frm - record.detected_at).total_seconds() / 86400),
             diagnosis_confidence=diagnosis.confidence,
             actions_today=actions_today,
-            policy_max_attempts=3,
+            policy_max_attempts=_policy_max_attempts(action.policy_ref, policy_for),
             extra={"promised_for": promised.get(action.record_id)},
         )
 

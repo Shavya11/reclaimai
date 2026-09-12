@@ -758,9 +758,15 @@ database. Restore point: tag `pre-report-baseline`.
       switch is persisted, so a restart cannot re-arm the agent.
 - [x] `/api/health` named `claude-sonnet-5` with no Anthropic key. Names the
       model that will answer.
-- [ ] Deferred, invisible from a demo: `daily_budget` is per-batch not per-day;
-      `frequency_cap.window_days` drifts if edited; settlement self-signs an
-      outcome for a real link under `--live`.
+- [x] The three that were invisible from a demo. `daily_budget` started at
+      zero on every call to the gate, so "200 per day" meant "200 per batch" —
+      now seeded from what was executed today, as the frequency cap already
+      was. `frequency_cap.window_days` changed the deferral but not the count —
+      now threaded through `contact_history`. `policy_max_attempts` was the
+      literal 3 — now the row's own value. And settlement self-signed a `paid`
+      for any pending intervention, including a real link minted under
+      `--live` — now a real Razorpay id is left to Razorpay, so the simulator
+      can never put a modelled outcome on an id a customer could actually pay.
 
 ### Phase 4 — the credibility play
 

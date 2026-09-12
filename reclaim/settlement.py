@@ -59,6 +59,9 @@ class SettlementResult:
     # claim this figure exists to stop us making.
     organic: int = 0
     organic_paise: int = 0
+    # Interventions with a real Razorpay id, which the simulator refuses to
+    # decide. Their webhook, if one comes, comes from Razorpay.
+    left_to_razorpay: int = 0
     events: list[dict[str, Any]] = field(default_factory=list)
     # Replies raised by this settlement, record_id -> text. Handed back rather
     # than handled here: settlement's job ends at "they did not pay, and they
@@ -77,6 +80,7 @@ class SettlementResult:
             "failed_again": self.failed_again,
             "unattributed": self.unattributed,
             "duplicates": self.duplicates,
+            "left_to_razorpay": self.left_to_razorpay,
             "replies": len(self.replies),
         }
 
@@ -116,6 +120,11 @@ def _deliver(body: dict, *, event_id: str, secret: str) -> Any:
                    simulated=True)
 
 
+def _is_stub(razorpay_ref: str) -> bool:
+    """Ids this wrapper minted in DRY_RUN carry `_stub_`; Razorpay's never do."""
+    return "_stub_" in razorpay_ref
+
+
 def settle(
     truth: dict[str, RootCause],
     *,
@@ -136,8 +145,19 @@ def settle(
     promised = set(open_promises())
 
     for item in _pending(only):
-        result.pending += 1
         rid = item["record_id"]
+        ref = item["razorpay_ref"]
+
+        # A real link is Razorpay's to settle. The simulator decides outcomes
+        # for the stubs it minted itself; deciding one for a link a customer
+        # could actually pay would mean a `--live` run fabricated a payment
+        # for a real id, and the scoreboard could never again tell the two
+        # apart. Leave it pending; the webhook, if it comes, will be real.
+        if ref and not _is_stub(ref):
+            result.left_to_razorpay += 1
+            continue
+
+        result.pending += 1
         cause = truth.get(rid, RootCause.UNKNOWN)
 
         try:
@@ -164,7 +184,6 @@ def settle(
                         on_promised_date=rid in promised)
         paid = rng.random() < p
 
-        ref = item["razorpay_ref"]
         amount = item["amount"]
         payment_id = f"pay_{rng.getrandbits(48):012x}"
 

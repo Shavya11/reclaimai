@@ -187,3 +187,34 @@ def test_organic_money_is_its_own_bucket_and_the_board_still_balances():
     assert board.recovered_paise == 0, "an unprompted payment inflated recovery"
     assert board.unrecoverable_paise == 0, "money that arrived was written off"
     assert board.balances
+
+
+# --- the simulator never decides a real link ---------------------------------
+
+def test_settlement_leaves_a_real_razorpay_link_to_razorpay():
+    """A `--live` run mints a real link. The simulator must not then sign a
+    fake `paid` for it - that would fabricate a payment for an id a customer
+    could actually pay, and the scoreboard could never again tell real from
+    modelled. Real ids carry no `_stub_`; those are left pending."""
+    from reclaim.settlement import settle
+
+    real = _record("REC_REAL")
+    stub = _record("REC_STUB")
+    _executed_intervention(real, ref="plink_TVzUIBlbgxHtxw")   # Razorpay-shaped
+    _executed_intervention(stub, ref="plink_stub_9752d72bf0ffe9")
+
+    result = settle({real: RootCause.INSUFFICIENT_FUNDS,
+                     stub: RootCause.INSUFFICIENT_FUNDS}, seed=42)
+
+    assert result.left_to_razorpay == 1
+    assert result.pending == 1, "the stub was decided, the real one was not"
+    with SessionLocal() as session:
+        real_row = (session.query(InterventionRow)
+                    .filter(InterventionRow.record_id == real).one())
+        assert real_row.result is None, "the simulator settled a real link"
+        assert session.get(AtRiskRecordRow, real).state == RecordState.AT_RISK.value
+        # and no webhook event was manufactured for the real id
+        from reclaim.db import WebhookEventRow
+        assert (session.query(WebhookEventRow)
+                .filter(WebhookEventRow.razorpay_ref == "plink_TVzUIBlbgxHtxw")
+                .count()) == 0

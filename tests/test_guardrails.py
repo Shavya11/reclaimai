@@ -375,3 +375,68 @@ def test_a_malformed_promise_never_opens_the_gate(promised):
     )
     assert isinstance(result.allowed, bool)
 
+
+
+# --- the three enforcement gaps ---------------------------------------------
+
+def test_daily_budget_is_per_day_not_per_batch():
+    """`actions_today` used to start at zero on every call to the gate, so ten
+    batches in one day permitted ten times the cap. It is seeded from what was
+    executed today."""
+    from reclaim.repository import actions_today
+    from reclaim.timeutil import now
+    from reclaim.brain.gate import run as gate_run
+
+    seeded = actions_today(now())
+    assert isinstance(seeded, int) and seeded >= 0
+    # the gate must start from that number, not zero: with the cap set to the
+    # seeded count, the very first action of a fresh batch is over budget.
+    from reclaim.models import AtRiskRecord, Diagnosis, ProposedAction
+    from reclaim.enums import ActionType, Channel, LeakType, RecordState, RootCause
+
+    record = AtRiskRecord(id="REC_DB", leak_type=LeakType.FAILED_PAYMENT, amount=100,
+                          counterparty_id="CUST_DB", source_ref="pay_db",
+                          detected_at=now(), raw_signals={}, state=RecordState.AT_RISK)
+    diag = Diagnosis(root_cause=RootCause.INSUFFICIENT_FUNDS, confidence=1.0,
+                     reasoning="t", recoverable=True, source="deterministic")
+    action = ProposedAction(record_id="REC_DB", action_type=ActionType.SILENT_RETRY,
+                            channel=None, scheduled_for=NOON, attempt_number=1,
+                            policy_ref="FAILED_PAYMENT.INSUFFICIENT_FUNDS",
+                            rationale="t", amount=100)
+    from reclaim.brain.guardrails.rules import daily_budget as rule_module
+
+    original = rule_module.threshold
+    try:
+        # the rule binds `threshold` at import; patch the name it actually reads
+        rule_module.threshold = lambda *path, default=None: (
+            seeded if path[:2] == ("daily_budget", "max_auto_actions_per_day")
+            else original(*path, default=default))
+        report = gate_run([record], {"REC_DB": diag}, [action], {}, frm=now())
+    finally:
+        rule_module.threshold = original
+    # cap == already-executed count -> the budget is exhausted before this action
+    blocked_by = [v.guardrail for v in report.outcomes[0].result.violations]
+    assert "daily_budget" in blocked_by
+
+
+def test_frequency_cap_counts_over_the_window_it_claims():
+    """The deferral read `window_days` from config; the count did not. Editing
+    the window in the rules studio changed one and not the other."""
+    import inspect
+    from reclaim.brain import gate
+
+    src = inspect.getsource(gate.run)
+    assert "contact_history(frm, window_days=window)" in src
+    assert 'threshold("frequency_cap", "window_days"' in src
+
+
+def test_max_attempts_comes_from_the_policy_row_not_a_literal():
+    from reclaim.brain.gate import _policy_max_attempts
+
+    rows = {("FAILED_PAYMENT", "INSUFFICIENT_FUNDS"): {"max_attempts": 2},
+            ("FAILED_PAYMENT", "BANK_DOWNTIME"): {"max_attempts": 3}}
+    lookup = lambda leak, cause: rows.get((leak, cause))
+    assert _policy_max_attempts("FAILED_PAYMENT.INSUFFICIENT_FUNDS", lookup) == 2
+    assert _policy_max_attempts("FAILED_PAYMENT.BANK_DOWNTIME", lookup) == 3
+    assert _policy_max_attempts("FAILED_PAYMENT.NOPE", lookup) == 3  # default, not a crash
+    assert _policy_max_attempts("X.Y", lambda l, c: {"max_attempts": "junk"}) == 3

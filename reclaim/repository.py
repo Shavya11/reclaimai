@@ -114,6 +114,25 @@ def count_records() -> int:
         return s.query(AtRiskRecordRow).count()
 
 
+def actions_today(at) -> int:
+    """Automated actions already executed on `at`'s IST calendar day.
+
+    Guardrail #9 says "200 per day". A counter that starts at zero on every
+    call to the gate says "200 per batch", and a day with ten batches in it
+    permits two thousand. Seeded from what was executed, like the frequency
+    cap is, so the unit in the config is the unit that is enforced.
+    """
+    from .db import InterventionRow
+
+    day = to_ist(at).date()
+    with SessionLocal() as s:
+        rows = (s.query(InterventionRow.executed_at)
+                .filter(InterventionRow.outcome == "EXECUTED")
+                .filter(InterventionRow.executed_at.isnot(None))
+                .all())
+    return sum(1 for (executed_at,) in rows if to_ist(executed_at).date() == day)
+
+
 def contact_history(before, window_days: int = 7):
     """Contacts per customer inside the trailing window, from what was actually
     executed — not from a per-batch tally.
