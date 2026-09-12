@@ -31,6 +31,10 @@ class Settings(BaseSettings):
 
     autopilot_enabled: bool = True
 
+    # Required in X-Admin-Token for rule edits, the kill switch and resets.
+    # Empty means: loopback only. See api/auth.py.
+    admin_token: str = ""
+
     # Defaults to True so a clone with no credentials never makes a live call.
     dry_run: bool = True
 

@@ -95,10 +95,16 @@ services:
       # restored from a snapshot that was built WITH layer 2, so the published
       # numbers hold either way. What a key buys is the live buttons — Run batch
       # and the clock chips re-diagnose for real, and without one they re-run
-      # the arc on layer 1 alone and land ~₹91,046 against the ₹1,22,347 the
-      # page loaded with. Set GEMINI_API_KEY so pressing a button agrees with
-      # what the page already says.
+      # the arc on layer 1 alone and land around ₹8.6L against the ₹27,44,651
+      # the page loaded with. Set GEMINI_API_KEY so pressing a button agrees
+      # with what the page already says.
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.5-flash-lite
+      # Rule edits, the kill switch and resets answer only to this header. It
+      # is set in the Render dashboard, never here and never in the UI bundle:
+      # the dashboard prompts the operator for it once per tab. Without it, a
+      # deployment's admin endpoints are locked to everyone - the safe failure.
+      - key: ADMIN_TOKEN
+        sync: false

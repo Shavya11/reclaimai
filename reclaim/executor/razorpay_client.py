@@ -1,9 +1,19 @@
 """Thin Razorpay wrapper. Three responsibilities and nothing else:
 
-  * every write carries an idempotency key
+  * every write carries its idempotency key TO Razorpay - as `receipt` on an
+    order and `reference_id` on a payment link - and a retry looks the key up
+    before it sends again
   * transient failures retry with backoff, permanent ones do not
   * DRY_RUN logs the call instead of making it, so a clone with no credentials
     still runs the full pipeline end to end
+
+The first point is the one that used to be false. The key was claimed locally
+before the call, which stops the SAME tuple executing twice - but nothing
+carried it onto the wire, so a request that succeeded at Razorpay and timed out
+on the way back was re-sent with nothing for Razorpay to deduplicate on. Three
+attempts, three orders. Razorpay enforces `reference_id` unique per payment
+link and lets an order be fetched by `receipt`, which is what the retry now
+does: the second attempt asks whether the first one landed.
 """
 
 import hashlib
@@ -18,6 +28,8 @@ log = logging.getLogger(__name__)
 
 _MAX_ATTEMPTS = 3
 _BASE_DELAY = 0.5
+_MAX_KEY_LENGTH = 40  # Razorpay's cap on both `receipt` and `reference_id`
+_UNKNOWN = object()   # a lookup that errored, as distinct from one that found nothing
 
 # Razorpay returns these when the request itself was fine and the world was not.
 _RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
@@ -26,6 +38,18 @@ _RETRYABLE_MESSAGES = ("too many requests", "rate limit", "timeout", "gateway")
 
 class RazorpayError(RuntimeError):
     pass
+
+
+def _first(listing: Any) -> dict[str, Any] | None:
+    """The one entity in a Razorpay list response, or None.
+
+    Orders come back as `{"items": [...]}`; payment links as
+    `{"payment_links": [...]}`. Same question, two shapes.
+    """
+    if not isinstance(listing, dict):
+        return None
+    items = listing.get("items") or listing.get("payment_links") or []
+    return items[0] if items else None
 
 
 def _stub_id(idempotency_key: str) -> str:
@@ -40,10 +64,17 @@ def _stub_id(idempotency_key: str) -> str:
 
 
 class RazorpayClient:
-    def __init__(self, dry_run: bool | None = None) -> None:
+    def __init__(self, dry_run: bool | None = None, *, sdk: Any = None) -> None:
         self.dry_run = settings.dry_run if dry_run is None else dry_run
         self._client = None
         self.calls: list[dict[str, Any]] = []  # DRY_RUN transcript, used by tests
+        if sdk is not None:
+            # A stand-in for razorpay.Client. Exists so a test can assert what
+            # actually goes on the wire; the DRY_RUN transcript records the key
+            # this wrapper was GIVEN, which is not the same claim.
+            self._client = sdk
+            self.dry_run = False
+            return
         if not self.dry_run:
             if not settings.has_razorpay:
                 raise RazorpayError("live mode requested but no rzp_test_ credentials")
@@ -57,27 +88,36 @@ class RazorpayClient:
     # -- writes --------------------------------------------------------------
 
     def create_order(self, amount: int, *, idempotency_key: str, **kw) -> dict[str, Any]:
+        # `receipt` is Razorpay's merchant reference on an order, and the one
+        # field an order can be fetched back by.
+        payload = {"amount": amount, "currency": "INR",
+                   "receipt": idempotency_key, **kw}
         return self._write(
             "order.create",
             idempotency_key,
-            lambda: self._client.order.create(
-                {"amount": amount, "currency": "INR", **kw}
-            ),
+            lambda: self._client.order.create(payload),
+            find=lambda: _first(self._client.order.all({"receipt": idempotency_key})),
             stub={"id": f"order_stub_{_stub_id(idempotency_key)}", "amount": amount,
-                  "status": "created"},
+                  "receipt": idempotency_key, "status": "created"},
         )
 
     def create_payment_link(
         self, amount: int, *, idempotency_key: str, prefill_method: str | None = None, **kw
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {"amount": amount, "currency": "INR", **kw}
+        # `reference_id` is enforced unique per payment link by Razorpay, so a
+        # duplicate is refused server-side - the remote half of the guarantee.
+        payload: dict[str, Any] = {"amount": amount, "currency": "INR",
+                                   "reference_id": idempotency_key, **kw}
         if prefill_method:
             payload["options"] = {"checkout": {"method": {prefill_method: "1"}}}
         return self._write(
             "payment_link.create",
             idempotency_key,
             lambda: self._client.payment_link.create(payload),
+            find=lambda: _first(self._client.payment_link.all(
+                {"reference_id": idempotency_key})),
             stub={"id": f"plink_stub_{_stub_id(idempotency_key)}", "amount": amount,
+                  "reference_id": idempotency_key,
                   "short_url": f"https://rzp.io/i/{_stub_id(idempotency_key)[:8]}",
                   "status": "created"},
         )
@@ -85,29 +125,73 @@ class RazorpayClient:
     # -- plumbing ------------------------------------------------------------
 
     def _write(
-        self, op: str, idempotency_key: str, call: Callable[[], Any], *, stub: dict
+        self, op: str, idempotency_key: str, call: Callable[[], Any], *,
+        find: Callable[[], Any], stub: dict,
     ) -> dict[str, Any]:
         if not idempotency_key:
             raise RazorpayError(f"{op} attempted without an idempotency key")
+        if len(idempotency_key) > _MAX_KEY_LENGTH:
+            # Both `receipt` and `reference_id` cap at 40 characters. A key that
+            # does not fit would be silently truncated or refused; either way the
+            # guarantee is gone, so refuse here where it is visible.
+            raise RazorpayError(f"{op} idempotency key exceeds {_MAX_KEY_LENGTH} chars")
         self.calls.append({"op": op, "idempotency_key": idempotency_key})
         if self.dry_run:
             log.info("DRY_RUN %s key=%s", op, idempotency_key)
             return {**stub, "_dry_run": True}
-        return self._with_retry(op, call)
+        return self._with_retry(op, call, find)
 
-    def _with_retry(self, op: str, call: Callable[[], Any]) -> dict[str, Any]:
+    def _with_retry(
+        self, op: str, call: Callable[[], Any], find: Callable[[], Any]
+    ) -> dict[str, Any]:
         last: Exception | None = None
         for attempt in range(1, _MAX_ATTEMPTS + 1):
+            if attempt > 1:
+                # The previous attempt may have succeeded at Razorpay and failed
+                # only on the way back. Ask before sending again.
+                existing = self._lookup(op, find)
+                if existing is _UNKNOWN:
+                    # Cannot tell whether the last request landed. Re-sending
+                    # risks a second charge; stopping risks an unsent link. A
+                    # payments system takes the second risk, every time.
+                    raise RazorpayError(
+                        f"{op}: previous attempt may have landed and the lookup "
+                        f"failed; refusing to re-send. Last error: {last}"
+                    ) from last
+                if existing:
+                    log.info("%s already landed for this key; not re-sending", op)
+                    return existing
             try:
                 return call()
             except Exception as exc:  # noqa: BLE001 - SDK raises a wide surface
                 last = exc
+                if self._is_duplicate(exc):
+                    # Razorpay refused because the key already exists - the
+                    # remote guard fired. Fetch what it is guarding.
+                    existing = self._lookup(op, find)
+                    if existing and existing is not _UNKNOWN:
+                        return existing
                 if not self._is_retryable(exc) or attempt == _MAX_ATTEMPTS:
                     break
                 delay = _BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.2)
                 log.warning("%s failed (attempt %d), retrying in %.2fs", op, attempt, delay)
                 time.sleep(delay)
         raise RazorpayError(f"{op} failed after retries: {last}") from last
+
+    @staticmethod
+    def _lookup(op: str, find: Callable[[], Any]) -> Any:
+        """The original entity, None if nothing landed, or _UNKNOWN if the
+        question could not be answered. Three answers, because "I don't know"
+        and "no" lead to opposite decisions."""
+        try:
+            return find() or None
+        except Exception as exc:  # noqa: BLE001
+            log.warning("%s: lookup by idempotency key failed: %s", op, exc)
+            return _UNKNOWN
+
+    @staticmethod
+    def _is_duplicate(exc: Exception) -> bool:
+        return "already exist" in str(exc).lower()
 
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:

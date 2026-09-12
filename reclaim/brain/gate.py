@@ -76,7 +76,11 @@ def run(
     frm = frm or now()
     executed = set(executed_keys or ())
     by_id = {r.id: r for r in records}
-    autopilot = (settings.autopilot_enabled if autopilot_enabled is None
+    # The persisted value, not the process's: a flip made through the API has
+    # to survive a restart, or the panic button un-presses itself.
+    from ..killswitch import enabled as autopilot_persisted
+
+    autopilot = (autopilot_persisted() if autopilot_enabled is None
                  else autopilot_enabled)
 
     # Seeded from what was actually executed, so the seven-day window survives a

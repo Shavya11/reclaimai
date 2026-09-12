@@ -46,6 +46,13 @@ FALLBACK = (
     "You can complete it here: {link}"
 )
 
+# Appended to every message, by render() rather than by each template, so a
+# template added later cannot leave it out. The system honours STOP - guardrail
+# 2 refuses every contact after it - but honouring an opt-out the customer was
+# never told about is not consent handling, it is luck. TRAI expects the
+# instruction on commercial SMS; a DLT-registered template would carry it too.
+OPT_OUT = "Reply STOP to opt out."
+
 
 def render(
     cause: RootCause,
@@ -56,9 +63,8 @@ def render(
     merchant: str = "your merchant",
 ) -> str:
     template = TEMPLATES.get((cause, tone)) or FALLBACK
-    return template.format(
-        amount=format_inr(amount), link=link, merchant=merchant
-    )
+    body = template.format(amount=format_inr(amount), link=link, merchant=merchant)
+    return f"{body} {OPT_OUT}"
 
 
 # SMS is metered and DLT-templated in India; long copy costs real money and

@@ -16,6 +16,7 @@ from datetime import datetime
 from ..config import settings
 from ..enums import Channel
 from ..clock import now
+from .messages import MAX_LENGTH, fits
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +54,16 @@ class ChannelSender:
         delivery = Delivery(
             channel=channel, recipient=recipient, message=message, sent_at=now(),
         )
+
+        # Checked here, not only in a test. A message over the limit truncates
+        # mid-link on a real gateway, and a truncated link is a contact spent
+        # for nothing - it fails here instead, loudly, as a delivery that did
+        # not happen.
+        if not fits(channel, message):
+            delivery.ok = False
+            delivery.error = (f"message is {len(message)} chars; "
+                              f"{channel.value} allows {MAX_LENGTH.get(channel, 1024)}")
+            return self._record(delivery)
 
         if self.dry_run:
             log.info("DRY_RUN send %s -> %s", channel.value, recipient)

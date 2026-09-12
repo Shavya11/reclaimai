@@ -17,12 +17,13 @@ import threading
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import desc
 
-from .. import audit, clock
+from .. import audit, clock, killswitch
+from .auth import is_locked, require_admin
 from ..config import ROOT, settings
 from ..db import (
     AtRiskRecordRow,
@@ -227,15 +228,22 @@ async def razorpay_webhook(request: Request) -> Response:
 
 
 @app.get("/api/health")
-def health() -> dict[str, Any]:
+def health(request: Request) -> dict[str, Any]:
     return {
         "ok": True,
         "dry_run": settings.dry_run,
-        "autopilot_enabled": settings.autopilot_enabled,
+        "autopilot_enabled": killswitch.enabled(),
+        # Whether THIS caller would need a token for an admin write. The
+        # dashboard reads it to decide whether to ask for one.
+        "admin_locked": is_locked(request),
         "razorpay_credentials": settings.has_razorpay,
         "anthropic_credentials": settings.has_anthropic,
         "gemini_credentials": settings.has_gemini,
-        "model": settings.anthropic_model,
+        # The model that will actually answer, not the one at the top of the
+        # config. Naming claude-sonnet-5 with no Anthropic key was a lie.
+        "model": (settings.anthropic_model if settings.has_anthropic
+                  else settings.gemini_model if settings.has_gemini
+                  else None),
         "clock": clock.now().isoformat(),
         "time_travelled": clock.is_travelled(),
         # The dashboard polls on this rather than guessing from the scoreboard.
@@ -581,15 +589,15 @@ def api_tick(advance: str = Query(default="24h")) -> dict[str, Any]:
             "clock": clock.now().isoformat(), "seeding": True}
 
 
-@app.post("/api/kill-switch")
+@app.post("/api/kill-switch", dependencies=[Depends(require_admin)])
 def kill_switch(enabled: bool = Query(...)) -> dict[str, Any]:
     """Guardrail #1, the panic button, at runtime. Flipping it off blocks every
-    action on the next tick — including the ones already scheduled."""
-    settings.autopilot_enabled = enabled
-    return {"autopilot_enabled": settings.autopilot_enabled}
+    action on the next tick — including the ones already scheduled. Persisted,
+    so a restart cannot quietly re-arm the agent."""
+    return {"autopilot_enabled": killswitch.set_enabled(enabled)}
 
 
-@app.post("/api/clock/reset")
+@app.post("/api/clock/reset", dependencies=[Depends(require_admin)])
 def clock_reset() -> dict[str, Any]:
     clock.reset()
     return {"clock": clock.now().isoformat(), "time_travelled": False}
@@ -633,7 +641,7 @@ def admin_rules() -> dict[str, Any]:
     return admin.snapshot()
 
 
-@app.post("/api/admin/policy/{leak_type}/{root_cause}")
+@app.post("/api/admin/policy/{leak_type}/{root_cause}", dependencies=[Depends(require_admin)])
 def admin_set_policy(leak_type: str, root_cause: str,
                      body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     from .. import admin
@@ -649,7 +657,7 @@ def admin_set_policy(leak_type: str, root_cause: str,
     return {"leak_type": leak_type, "root_cause": root_cause, "row": saved}
 
 
-@app.post("/api/admin/guardrail/{name}")
+@app.post("/api/admin/guardrail/{name}", dependencies=[Depends(require_admin)])
 def admin_set_guardrail(name: str,
                         body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     from .. import admin
@@ -664,7 +672,7 @@ def admin_set_guardrail(name: str,
     return {"name": name, "config": saved}
 
 
-@app.post("/api/admin/reset")
+@app.post("/api/admin/reset", dependencies=[Depends(require_admin)])
 def admin_reset() -> dict[str, Any]:
     from .. import admin
 

@@ -190,3 +190,43 @@ def test_dry_run_makes_no_live_call():
     client = RazorpayClient(dry_run=True)
     out = client.create_payment_link(1000, idempotency_key="K:1:SEND_LINK")
     assert out["_dry_run"] is True
+
+
+def test_every_message_tells_the_customer_how_to_opt_out():
+    """Guardrail 2 honours STOP. That is only consent handling if the customer
+    was told STOP exists - every template and the fallback must carry it."""
+    from reclaim.executor.messages import OPT_OUT, TEMPLATES
+
+    for (cause, tone) in TEMPLATES:
+        text = render(cause, amount=50_000, link="https://rzp.io/i/x", tone=tone)
+        assert OPT_OUT in text, f"{cause.value}/{tone} carries no opt-out"
+    # the fallback path, reached by an unknown (cause, tone)
+    assert OPT_OUT in render(RootCause.UNKNOWN, amount=50_000, link="https://rzp.io/i/x")
+
+
+def test_every_sms_template_still_fits_with_the_opt_out_appended():
+    from reclaim.executor.messages import TEMPLATES
+
+    for (cause, tone) in TEMPLATES:
+        # the longest realistic substitution: a lakh-scale amount and a real link
+        text = render(cause, amount=9_99_99_900, link="https://rzp.io/i/abcdefgh",
+                      tone=tone, merchant="A Fairly Long Merchant Name Pvt Ltd")
+        assert fits(Channel.SMS, text), f"{cause.value}/{tone}: {len(text)} chars"
+
+
+def test_a_message_over_the_channel_limit_is_refused_not_truncated():
+    """A truncated SMS loses the link. Refusing is a delivery that did not
+    happen - visible, and a contact not spent for nothing."""
+    sender = ChannelSender(dry_run=True)
+    too_long = "x" * (MAX_LENGTH[Channel.SMS] + 1)
+    delivery = sender.send(Channel.SMS, "+919812345678", too_long)
+
+    assert delivery.ok is False
+    assert "allows" in (delivery.error or "")
+    assert delivery.provider_ref is None, "refused, yet marked as sent"
+
+
+def test_a_message_within_the_limit_is_sent():
+    sender = ChannelSender(dry_run=True)
+    delivery = sender.send(Channel.SMS, "+919812345678", "short and fine")
+    assert delivery.ok is True

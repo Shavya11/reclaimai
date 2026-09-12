@@ -191,6 +191,23 @@ def test_blocked_is_not_dropped():
     assert permanent.deferred_until is None  # permanent stop, not a reschedule
 
 
+def test_a_dnd_block_carries_a_next_step():
+    """DND never expires, so a refusal with no next step loops forever - the
+    same record re-proposed on SMS and re-refused every tick. The next step
+    is a person who can email."""
+    result = evaluate_all(_action(channel=Channel.SMS), _ctx(on_dnd=True))
+    dnd = next(v for v in result.violations if v.guardrail == "dnd")
+
+    assert result.allowed is False
+    assert dnd.requires_human is True, "a DND block with no next step is a dead end"
+    assert not dnd.closes_record, "DND does not end the record - email is still allowed"
+
+
+def test_dnd_does_not_touch_email():
+    result = evaluate_all(_action(channel=Channel.EMAIL), _ctx(on_dnd=True))
+    assert not any(v.guardrail == "dnd" for v in result.violations)
+
+
 def test_permanent_block_outranks_a_deferral():
     result = evaluate_all(_action(when=THREE_AM), _ctx(opted_out=True))
     assert result.deferred_until is None
