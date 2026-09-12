@@ -731,6 +731,111 @@ def _baseline_gap_is_fully_accounted_for() -> Check:
                  f"of which {format_inr(gap['deliberate_paise'])} is refused on purpose")
 
 
+# The records DEMO.md stops on, and the property each one is there to show.
+# Pinned here because the demo script is prose and the batch is generated: when
+# the generator was re-drawn, three of these silently became records with none
+# of the narrated properties, and nothing failed. A presenter found out on
+# stage or not at all.
+_DEMO_RECORDS = {
+    "REC_5001": "bank-outage cohort — HDFC, inside the failing hour",
+    "REC_5100": "above the value ceiling — routed to a human",
+    "REC_5003": "customer opted out — contact refused permanently",
+}
+
+
+def _demo_script_records_still_match() -> Check:
+    """Every record DEMO.md stops on still has the property it is cited for."""
+    import json
+
+    from .db import SessionLocal
+    from .db import AtRiskRecordRow, CustomerRow
+    from .brain.guardrails.rules.value_ceiling import ceiling_for
+
+    name = "demo script records still match the batch"
+    script = ROOT / "DEMO.md"
+    if not script.exists():
+        return Check(name, PENDING, "DEMO.md not found")
+    text = script.read_text(encoding="utf-8")
+
+    problems: list[str] = []
+    with SessionLocal() as session:
+        if session.query(AtRiskRecordRow).count() == 0:
+            return Check(name, PENDING,
+                         "no batch in the database — try `cli demo`")
+
+        for rid, purpose in _DEMO_RECORDS.items():
+            if rid not in text:
+                problems.append(f"{rid} is pinned here but DEMO.md no longer cites it")
+                continue
+            row = session.get(AtRiskRecordRow, rid)
+            if row is None:
+                problems.append(f"{rid} ({purpose}) is not in the batch")
+                continue
+            raw = row.raw_signals or {}
+            signals = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+
+            if rid == "REC_5001":
+                issuer = signals.get("issuer_bank")
+                if issuer != "HDFC":
+                    problems.append(
+                        f"{rid} is cited as the HDFC outage cohort but the "
+                        f"issuer is {issuer}")
+            elif rid == "REC_5100":
+                ceiling = ceiling_for(row.leak_type)
+                if row.amount <= ceiling:
+                    problems.append(
+                        f"{rid} is cited as above the value ceiling but "
+                        f"{row.amount} paise is under the {ceiling} ceiling")
+            elif rid == "REC_5003":
+                customer = session.get(CustomerRow, row.counterparty_id)
+                if customer is None or not customer.opted_out:
+                    problems.append(
+                        f"{rid} is cited as an opted-out customer but "
+                        f"{row.counterparty_id} has opted_out="
+                        f"{getattr(customer, 'opted_out', None)}")
+
+    if problems:
+        return Check(name, FAIL, "; ".join(problems))
+    return Check(name, PASS,
+                 f"all {len(_DEMO_RECORDS)} records DEMO.md stops on still "
+                 f"carry the property they are cited for")
+
+
+def _readme_headline_matches_the_scoreboard() -> Check:
+    """The figure printed in the README is the figure the code produces.
+
+    Three different "recovered" totals were in circulation at once, all
+    labelled seed 42, because each was copied by hand from a different run.
+    A number nobody re-checks is a number that drifts.
+    """
+    import re
+
+    from .money import format_inr
+    from .scoreboard import compute
+
+    name = "README headline matches the scoreboard"
+    readme = ROOT / "README.md"
+    if not readme.exists():
+        return Check(name, PENDING, "README.md not found")
+
+    match = re.search(r"Money recovered\s+(₹[\d,]+)",
+                      readme.read_text(encoding="utf-8"))
+    if not match:
+        return Check(name, FAIL,
+                     "no 'Money recovered' line found in README.md")
+
+    board = compute()
+    if board.records == 0:
+        return Check(name, PENDING, "no batch has been run yet — try `cli demo`")
+
+    published, actual = match.group(1), format_inr(board.recovered_paise)
+    if published != actual:
+        return Check(name, FAIL,
+                     f"README publishes {published}, the scoreboard computes "
+                     f"{actual}")
+    return Check(name, PASS, f"both say {actual}")
+
+
 def _dashboard_is_built() -> Check:
     """Present AND not older than the source it was built from.
 
@@ -792,6 +897,8 @@ CHECKS = [
     _replay_is_side_effect_free,
     _user_records_do_not_move_the_published_figures,
     _sandbox_preview_leaves_no_trace,
+    _demo_script_records_still_match,
+    _readme_headline_matches_the_scoreboard,
     _dashboard_is_built,
 ]
 

@@ -4,9 +4,9 @@
   "detail": "Every check is a property this project claims somewhere in prose. A guarantee nobody can run is a guarantee nobody should believe.",
   "test": "reclaim verify",
   "command": "reclaim verify --json",
-  "produced_at": "2026-08-30T12:36:05.462793+00:00",
+  "produced_at": "2026-09-10T13:25:33.913022+00:00",
   "seed": 42,
-  "git_commit": "712f6ea",
+  "git_commit": "fdcde61",
   "result": {
     "checks": [
       {
@@ -32,7 +32,7 @@
       {
         "name": "batch is reproducible from seed",
         "status": "PASS",
-        "detail": "seed 42 -> 180 records, 1120981400 paise, digest 2506edd429e9728e, amounts AND timestamps identical every run"
+        "detail": "seed 42 -> 180 records, 1120981400 paise, digest 850a333d17a696c6, amounts AND timestamps identical every run"
       },
       {
         "name": "detectors cover all V1 leak types",
@@ -87,22 +87,22 @@
       {
         "name": "no action executed twice",
         "status": "PASS",
-        "detail": "182 executions, 182 distinct keys, 0 duplicates"
+        "detail": "192 executions, 192 distinct keys, 0 duplicates"
       },
       {
         "name": "scoreboard balances",
         "status": "PASS",
-        "detail": "\u20b91,12,09,814 = \u20b922,17,088 recovered + \u20b925,90,748 arrived unprompted + \u20b949,66,459 open + \u20b914,35,519 written off"
+        "detail": "\u20b91,12,09,814 = \u20b927,44,651 recovered + \u20b90 arrived unprompted + \u20b970,58,295 open + \u20b914,06,868 written off"
       },
       {
         "name": "every recovered rupee traces to an intervention",
         "status": "PASS",
-        "detail": "\u20b922,17,088 across 61 records, each traced from a verified webhook"
+        "detail": "\u20b927,44,651 across 69 records, each traced from a verified webhook"
       },
       {
         "name": "baseline gap is fully accounted for",
         "status": "PASS",
-        "detail": "\u20b915,19,886 the naive run collects and we do not, of which \u20b915,05,335 is refused on purpose"
+        "detail": "\u20b923,52,777 the naive run collects and we do not, of which \u20b923,38,963 is refused on purpose"
       },
       {
         "name": "shipped rules pass the admin validator",
@@ -117,12 +117,12 @@
       {
         "name": "promise states are closed and resolved ones are dated",
         "status": "PASS",
-        "detail": "8 promises, every state in the enum and every resolution dated"
+        "detail": "9 promises, every state in the enum and every resolution dated"
       },
       {
         "name": "no settled record is still queued for a human",
         "status": "PASS",
-        "detail": "42 open row(s), none of them already settled"
+        "detail": "50 open row(s), none of them already settled"
       },
       {
         "name": "self-cure is the same in both arms",
@@ -132,7 +132,7 @@
       {
         "name": "what-if replay leaves no trace",
         "status": "PASS",
-        "detail": "3657 rows and the demo clock unchanged across a full two-arc replay"
+        "detail": "3848 rows and the demo clock unchanged across a full two-arc replay"
       },
       {
         "name": "visitor records stay out of the published figures",
@@ -145,12 +145,22 @@
         "detail": "5 previews wrote no row and moved no clock"
       },
       {
+        "name": "demo script records still match the batch",
+        "status": "PASS",
+        "detail": "all 3 records DEMO.md stops on still carry the property they are cited for"
+      },
+      {
+        "name": "README headline matches the scoreboard",
+        "status": "PASS",
+        "detail": "both say \u20b927,44,651"
+      },
+      {
         "name": "dashboard is built and servable",
         "status": "PASS",
         "detail": "ui/out/index.html present (24 KB), newer than every file in ui/src"
       }
     ],
-    "passed": 28,
+    "passed": 30,
     "failed": 0,
     "pending": 0
   }

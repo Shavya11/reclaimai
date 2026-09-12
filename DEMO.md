@@ -26,7 +26,7 @@ Browser on `http://127.0.0.1:8000`, **Dashboard** tab.
 
 **Check before you speak:**
 
-- [ ] `cli verify` shows 24 passed, 0 failed
+- [ ] `cli verify` shows 30 passed, 0 failed
 - [ ] the dashboard's four top numbers are populated
 - [ ] the Human queue tab shows escalations
 - [ ] the Promises tab has at least one open promise and one broken one
@@ -39,10 +39,10 @@ Browser on `http://127.0.0.1:8000`, **Dashboard** tab.
 
 **Dashboard, top row.**
 
-> "This merchant has ₹8.25 lakh sitting in failed payments, dead carts and
-> bounced mandates, and unpaid B2B invoices. 180 records. Today nobody chases
-> any of it — a failed
-> payment is a support ticket that never gets written."
+> "This merchant has ₹1.12 crore sitting in failed payments, dead carts,
+> bounced mandates and unpaid B2B invoices — 180 records, of which ₹8.25 lakh
+> is the payments side and the rest is receivables. Today nobody chases any of
+> it — a failed payment is a support ticket that never gets written."
 
 Point at **Money at risk ₹1,12,09,814 · 180 records detected**.
 
@@ -50,30 +50,36 @@ Point at **Money at risk ₹1,12,09,814 · 180 records detected**.
 
 ## Beat 2 — run the batch (60s)
 
-Do **not** re-run the whole arc on stage. Show that it is live instead:
+Do **not** press **Run batch** on stage. It resets the database and walks the
+whole arc from scratch — roughly one hundred seconds against a rate-limited
+model tier, and it lands on a *different* number than the one you just quoted.
+Show that it is live with the clock instead:
 
-Click **Run batch**, then **20m**, **2h**, **24h** in the advance row.
+Click **20m**, then **2h**, then **24h** in the advance row.
 
 > "The agent detects, diagnoses, decides, checks fourteen guardrails, executes,
 > and attributes the outcome. Each of those buttons advances the demo clock —
 > a retry scheduled for the 1st of next month is not watchable otherwise, so
 > the schedule resolves against an explicit time rather than the wall clock."
 
-Each click is a real tick — detect, diagnose, decide, guardrail, execute,
-attribute — and returns in well under a second. Watch **Recovered** move.
+Each click is a real tick — actions that have come due fire, get gated, execute
+and attribute. Watch **Recovered** move. The request returns immediately and the
+work runs on a thread, so follow the `seeding` flag in the header rather than
+the shape of the scoreboard.
 
 ---
 
 ## Beat 3 — zoom into one record (90s)
 
-**Recovery queue → search `REC_5042` → click it.**
+**Recovery queue → search `REC_5001` → click it.**
 
 This is a bank-outage record. Its error text says *"the bank declined this
 transaction"* — read alone, that is a customer problem worth a message.
 
-> "Fifteen payments failed on HDFC inside one hour. Seventy-three percent of
-> that issuer's attempts, against a four-and-a-half percent baseline — sixteen
-> times normal. The error says *declined*. The cohort says *the bank is down*.
+> "Fifteen of twenty-one attempts on HDFC failed inside one hour. Seventy-one
+> percent of that issuer's traffic, against a four-point-six percent batch
+> baseline — fifteen times normal. The error says *declined*. The cohort says
+> *the bank is down*.
 >
 > So the agent did not message this customer. It did not message any of the
 > fifteen. It retried silently twenty minutes later, and it worked."
@@ -92,6 +98,9 @@ Point at the decision trail:
 
 > "Zero customer contacts on this cause. Fifteen needless messages prevented,
 > and that counterfactual is computed, not claimed — `cli diagnose` prints it."
+
+If a judge asks for the whole case in one place: `python -m reclaim.cli trace
+REC_5001` prints this exact trail, detection to money, in the terminal.
 
 ---
 
@@ -138,27 +147,30 @@ Now advance the clock past a promise date and show a **broken** one:
 
 ## Beat 4 — show a BLOCKED action (45s) ← THE WINNING MOMENT
 
-**Recovery queue → filter `Blocked`.** Then open **`REC_5001`**.
+**Recovery queue → filter `Blocked`.** Then open **`REC_5100`**.
 
-> "This one the agent wanted to chase. ₹1,47,603 across two records. The value ceiling stopped it.
+> "This one the agent wanted to chase. ₹77,374, a dead card — diagnosed
+> `EXPIRED_INSTRUMENT` off the error string, no model needed. It knew exactly
+> what to do and it did not do it.
 >
-> The value ceiling: anything above ₹50,000 needs a human, whatever the policy
-> says. And the confidence floor: the diagnosis came back `UNKNOWN` at zero
-> confidence, and a system that will not admit it does not know is a system
-> that guesses with someone's money.
+> Two guardrails refused it independently. The cooldown: this customer was
+> contacted inside the last twenty-four hours. And the value ceiling: anything
+> above ₹50,000 needs a human, whatever the policy says.
 >
-> It is in the human queue, with both reasons attached."
+> It is escalated, sitting in the human queue with both reasons attached."
 
-Then **`REC_5015`**:
+Then **`REC_5003`**:
 
-> "This customer opted out. Blocked permanently — not deferred, closed. The
-> record is done and nobody will chase it again."
+> "This customer opted out. Blocked permanently — not deferred, closed. Look at
+> the trail above the block: the agent proposed a message on five separate
+> ticks and consent refused it every time, then stopped the record for good.
+> Nobody will chase it again."
 
 Switch to the **Dashboard → Guardrails** panel:
 
-> "The agent wanted to act on all 120. Eighty-eight records were held back by a
-> guardrail, and every single refusal is in an append-only log with its reason
-> and what happens next. **The blocks are the product.**"
+> "Across 180 records the agent was refused 439 times, on 154 of them. Every
+> single refusal is in an append-only log with its reason and what happens
+> next. **The blocks are the product.**"
 
 ---
 
@@ -270,24 +282,35 @@ python -m reclaim.cli prove-idempotency
 ## Questions you will get
 
 **"What if the model hallucinates?"**
-> It can only return a member of a fixed twelve-value enum. A schema violation
-> becomes `UNKNOWN` and reaches a human. The policy table and thirteen
+> It can only return a member of a fixed seventeen-value enum. A schema violation
+> becomes `UNKNOWN` and reaches a human. The policy table and fourteen
 > guardrails sit below it either way — a wrong label costs a wrongly-timed
 > retry, never a wrong charge.
 
 **"Is the LLM running right now?"**
-> No — there is no `ANTHROPIC_API_KEY` on this machine, so these numbers are the
-> floor with layer 2 off. Thirty-eight records fall to `UNKNOWN` and are routed
-> to a human rather than guessed at. `--no-llm` is a real code path with tests,
-> not a mock: the batch is required to complete with the model down.
+> Yes — layer 2 runs live on `gemini-3.5-flash-lite`. The Anthropic path is
+> built and tested but there is no key on this machine, so these numbers came
+> from Gemini. Turn it off with `--no-llm` and the batch still completes: 38
+> records fall to `UNKNOWN` and go to a human rather than being guessed at.
+> That is a real code path with tests, not a mock.
 
 **"Are the webhooks real?"**
-> The receiver, the HMAC verification and the attribution chain are real and
-> tested — including the case that catches most implementations, verifying a
-> re-serialized body instead of the raw bytes. What is not real is a public
-> tunnel: `cloudflared` is not installed here, so the outcome payloads are
-> generated locally, signed, and posted through the same endpoint Razorpay would
-> hit. Nothing bypasses the signature check.
+> Razorpay has delivered here. Five events for `REC_5085` — a ₹683 link this
+> executor minted, paid on a test card in a browser — all HMAC-verified over the
+> raw bytes and walked back to the record. They are committed at
+> `evidence/webhook.json`, every one `simulated: false`. The rest of the batch is
+> signed locally and posted through that same endpoint, stored `simulated: true`
+> so the two never mix. Nothing bypasses the signature check.
+
+**"So how much of the recovered money is real?"**
+> None of it, and I would rather say so than have you find it. The scoreboard is
+> a modelled outcome walked through a real attribution chain — who paid is drawn
+> from a stated probability table, and every one of those events is stored
+> `simulated: true`. What is real is the chain itself: a Razorpay delivery for
+> `REC_5085` verified, deduplicated and walked back to the intervention that
+> minted the link. It arrived against a record we had already settled, so it
+> added nothing to the total — which is the deduplication working. The hard part
+> is proven; the number is modelled.
 
 **"Why is your recovery rate lower than the naive one?"**
 > Because we refuse contacts it makes. See the gap panel — it is itemised.

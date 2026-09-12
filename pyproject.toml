@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reclaim"
+version = "1.0.0"
+description = "ReclaimAI — AI revenue recovery agent (Razorpay Buildathon, Track 03)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0.36",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+    "python-dotenv>=1.0",
+    "razorpay>=2.0.1",
+    "anthropic>=0.40",
+    "google-genai>=2.20",
+    "apscheduler>=3.10",
+    "pyyaml>=6.0",
+    "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "hypothesis>=6.120",
+]
+
+# The docs, render.yaml and every evidence/*.json "command" field say `reclaim
+# <cmd>`. This is what makes that true; `python -m reclaim.cli <cmd>` stays
+# equivalent and is what a clone runs before installing anything.
+[project.scripts]
+reclaim = "reclaim.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["reclaim*"]
+
+[tool.setuptools.package-data]
+reclaim = ["brain/policy/*.yaml", "brain/guardrails/*.yaml"]

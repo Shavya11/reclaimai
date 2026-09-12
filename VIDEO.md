@@ -12,15 +12,22 @@ recruiter. Slightly under-perform it. Flat and specific beats enthusiastic.
 
 ---
 
-## Numbers that are WRONG in the older docs — do not say these
+## Numbers that were WRONG in the older docs — now fixed at source
 
-| Stale claim | Where | The truth |
+All of these have been corrected in the files themselves, and `cli verify` now
+fails the build if the demo records or the README headline drift again. Listed
+only so an older printout is recognisable as an older printout.
+
+| Was | Where | Corrected to |
 |---|---|---|
 | "twelve-value enum" | DEMO.md | **17** `RootCause` values |
-| "13 guardrails" | PROJECT.md §7 | **14** rule files |
-| "₹8.25 lakh at risk" | DEMO.md beat 1 | ₹8,24,984 is the **120 V1 records**. The full batch is **₹1,12,09,814 / 180 records** |
+| "13 guardrails" | PROJECT.md §7, CLAUDE.md | **14** rule files |
+| "₹8.25 lakh at risk" over 180 records | DEMO.md beat 1 | ₹8,24,984 is the **120 V1 records**; the full batch is **₹1,12,09,814 / 180** |
 | "88 records held back" | DEMO.md beat 4 | **439 refusals across 154 records** |
-| 35.0% / 2.51 contacts | README baseline table | That's the **baseline run**. The snapshot is **38.3% / 2.45**. Never mix them in one breath |
+| `REC_5042` / `REC_5001` / `REC_5015` | DEMO.md beats 3 and 4 | **`REC_5001` / `REC_5100` / `REC_5003`** — `REC_5001` is the HDFC outage record the C18 clip actually opens on screen (the voice says 5042; the screen is right) |
+| 35.0% / 2.51 contacts | README baseline table | **38.3% / 2.45** — the baseline now runs against the same state as the headline, so there are no longer two numbers to mix |
+| "Layer 2 has never run live" | README | It runs live on `gemini-3.5-flash-lite` |
+| "No webhook has arrived from Razorpay" | README | Five did, for `REC_5085` — `evidence/webhook.json` |
 
 **Restore the snapshot before recording any screen.** Layer 2 is
 non-deterministic; two live runs gave ₹27,44,651 and ₹23,44,566.

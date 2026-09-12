@@ -4,9 +4,9 @@
   "detail": "The naive strategy on the identical batch, drawing its coin flips from the same seeded stream keyed on (record, attempt). Nothing separates the two runs except what each chose to do, when, and to whom.",
   "test": "tests/test_scoreboard.py",
   "command": "reclaim baseline --json",
-  "produced_at": "2026-08-30T11:38:53.895782+00:00",
+  "produced_at": "2026-09-10T13:25:34.038804+00:00",
   "seed": 42,
-  "git_commit": "bad1a38",
+  "git_commit": "fdcde61",
   "result": {
     "baseline": {
       "label": "Naive baseline",
@@ -101,30 +101,40 @@
       "label": "ReclaimAI",
       "records": 180,
       "at_risk_paise": 1120981400,
-      "recovered_paise": 221708800,
-      "open_paise": 496645900,
-      "unrecoverable_paise": 143551900,
+      "recovered_paise": 274465100,
+      "open_paise": 705829500,
+      "unrecoverable_paise": 140686800,
       "at_risk_display": "\u20b91,12,09,814",
-      "recovered_display": "\u20b922,17,088",
-      "open_display": "\u20b949,66,459",
-      "unrecoverable_display": "\u20b914,35,519",
+      "recovered_display": "\u20b927,44,651",
+      "open_display": "\u20b970,58,295",
+      "unrecoverable_display": "\u20b914,06,868",
       "at_risk_short": "\u20b91.12Cr",
-      "recovered_short": "\u20b922.17L",
-      "records_recovered": 61,
-      "records_open": 38,
+      "recovered_short": "\u20b927.45L",
+      "records_recovered": 69,
+      "records_open": 49,
       "records_unrecoverable": 62,
-      "recovery_rate": 0.1978,
-      "record_recovery_rate": 0.3389,
+      "recovery_rate": 0.2448,
+      "record_recovery_rate": 0.3833,
       "by_root_cause": [
         {
           "root_cause": "AWAITING_APPROVAL",
-          "records": 34,
-          "recovered_records": 10,
-          "at_risk_paise": 728688600,
-          "recovered_paise": 150538800,
-          "contacts": 27,
-          "rate": 0.2941,
-          "value_rate": 0.2066
+          "records": 28,
+          "recovered_records": 9,
+          "at_risk_paise": 640624300,
+          "recovered_paise": 167165700,
+          "contacts": 22,
+          "rate": 0.3214,
+          "value_rate": 0.2609
+        },
+        {
+          "root_cause": "INVOICE_NOT_RECEIVED",
+          "records": 10,
+          "recovered_records": 8,
+          "at_risk_paise": 64074900,
+          "recovered_paise": 51996600,
+          "contacts": 14,
+          "rate": 0.8,
+          "value_rate": 0.8115
         },
         {
           "root_cause": "BUYER_CASH_CRUNCH",
@@ -137,14 +147,24 @@
           "value_rate": 0.2617
         },
         {
-          "root_cause": "INVOICE_NOT_RECEIVED",
-          "records": 8,
-          "recovered_records": 6,
-          "at_risk_paise": 39635100,
-          "recovered_paise": 27661900,
-          "contacts": 11,
-          "rate": 0.75,
-          "value_rate": 0.6979
+          "root_cause": "PAYMENT_STALLED",
+          "records": 6,
+          "recovered_records": 1,
+          "at_risk_paise": 72040200,
+          "recovered_paise": 8892100,
+          "contacts": 10,
+          "rate": 0.1667,
+          "value_rate": 0.1234
+        },
+        {
+          "root_cause": "INSUFFICIENT_FUNDS",
+          "records": 34,
+          "recovered_records": 18,
+          "at_risk_paise": 10740600,
+          "recovered_paise": 6315200,
+          "contacts": 40,
+          "rate": 0.5294,
+          "value_rate": 0.588
         },
         {
           "root_cause": "BANK_DOWNTIME",
@@ -155,16 +175,6 @@
           "contacts": 0,
           "rate": 0.8182,
           "value_rate": 0.1983
-        },
-        {
-          "root_cause": "INSUFFICIENT_FUNDS",
-          "records": 35,
-          "recovered_records": 12,
-          "at_risk_paise": 12780900,
-          "recovered_paise": 3412600,
-          "contacts": 33,
-          "rate": 0.3429,
-          "value_rate": 0.267
         },
         {
           "root_cause": "AUTH_DROPOFF",
@@ -207,20 +217,20 @@
           "value_rate": 0.0
         },
         {
-          "root_cause": "PAYMENT_STALLED",
-          "records": 2,
-          "recovered_records": 0,
-          "at_risk_paise": 7925600,
-          "recovered_paise": 0,
-          "contacts": 4,
-          "rate": 0.0,
-          "value_rate": 0.0
-        },
-        {
           "root_cause": "POLICY_BLOCK",
           "records": 4,
           "recovered_records": 0,
           "at_risk_paise": 3071200,
+          "recovered_paise": 0,
+          "contacts": 0,
+          "rate": 0.0,
+          "value_rate": 0.0
+        },
+        {
+          "root_cause": "UNKNOWN",
+          "records": 3,
+          "recovered_records": 0,
+          "at_risk_paise": 1826200,
           "recovered_paise": 0,
           "contacts": 0,
           "rate": 0.0,
@@ -235,82 +245,74 @@
           "contacts": 0,
           "rate": 0.0,
           "value_rate": 0.0
-        },
-        {
-          "root_cause": "UNKNOWN",
-          "records": 2,
-          "recovered_records": 0,
-          "at_risk_paise": 276000,
-          "recovered_paise": 0,
-          "contacts": 0,
-          "rate": 0.0,
-          "value_rate": 0.0
         }
       ],
       "guardrails_fired": {
-        "cooldown": 268,
-        "frequency_cap": 65,
-        "dnd": 26,
+        "cooldown": 292,
+        "frequency_cap": 70,
+        "dnd": 36,
         "consent": 15,
         "value_ceiling": 12,
-        "state_validity": 3,
-        "confidence_floor": 2,
-        "freshness": 2,
-        "max_attempts": 1
+        "state_validity": 4,
+        "confidence_floor": 3,
+        "freshness": 3,
+        "max_attempts": 2,
+        "promise_window": 2
       },
       "guardrails_records": {
-        "confidence_floor": 2,
+        "confidence_floor": 3,
         "consent": 15,
-        "cooldown": 66,
+        "cooldown": 67,
         "dnd": 3,
-        "frequency_cap": 40,
-        "freshness": 2,
-        "max_attempts": 1,
-        "state_validity": 3,
+        "frequency_cap": 43,
+        "freshness": 3,
+        "max_attempts": 2,
+        "promise_window": 2,
+        "state_validity": 4,
         "value_ceiling": 12
       },
-      "guardrails_total": 394,
-      "escalations": 48,
-      "escalations_open": 42,
-      "escalations_resolved": 6,
-      "organic_paise": 259074800,
-      "organic_records": 19,
-      "organic_display": "\u20b925,90,748",
-      "interventions": 181,
-      "contacts": 158,
+      "guardrails_total": 439,
+      "escalations": 51,
+      "escalations_open": 50,
+      "escalations_resolved": 1,
+      "organic_paise": 0,
+      "organic_records": 0,
+      "organic_display": "\u20b90",
+      "interventions": 192,
+      "contacts": 169,
       "silent_retries": 23,
-      "contacts_per_recovery": 2.59,
-      "webhooks_attributed": 181,
+      "contacts_per_recovery": 2.45,
+      "webhooks_attributed": 192,
       "invoice_records": 60,
       "invoice_at_risk_paise": 1038483000,
-      "invoice_recovered_paise": 209191600,
-      "invoice_recovered_records": 18,
+      "invoice_recovered_paise": 259045300,
+      "invoice_recovered_records": 20,
       "invoice_at_risk_display": "\u20b91,03,84,830",
-      "invoice_recovered_display": "\u20b920,91,916",
-      "invoice_recovery_rate": 0.2014,
-      "dso_before": 131.5,
-      "dso_after": 121.5,
-      "dso_improvement": 10.0,
+      "invoice_recovered_display": "\u20b925,90,453",
+      "invoice_recovery_rate": 0.2494,
+      "dso_before": 144.8,
+      "dso_after": 129.9,
+      "dso_improvement": 14.9,
       "promises": {
         "OPEN": 0,
-        "KEPT": 4,
-        "BROKEN": 4
+        "KEPT": 6,
+        "BROKEN": 3
       },
-      "promises_kept_rate": 0.5,
-      "replies_read": 25,
-      "user_records": 1,
-      "user_at_risk_paise": 249900,
+      "promises_kept_rate": 0.6667,
+      "replies_read": 27,
+      "user_records": 0,
+      "user_at_risk_paise": 0,
       "user_recovered_paise": 0,
       "user_recovered_records": 0,
-      "user_at_risk_display": "\u20b92,499",
+      "user_at_risk_display": "\u20b90",
       "user_recovered_display": "\u20b90",
       "balances": true
     },
     "gap": {
       "total": {
-        "records": 21,
-        "paise": 151988600,
-        "display": "\u20b915,19,886"
+        "records": 23,
+        "paise": 235277700,
+        "display": "\u20b923,52,777"
       },
       "reasons": [
         {
@@ -323,9 +325,9 @@
         {
           "reason": "above_value_ceiling",
           "label": "above the value ceiling - routed to a human",
-          "records": 4,
-          "paise": 27185700,
-          "display": "\u20b92,71,857"
+          "records": 7,
+          "paise": 110548500,
+          "display": "\u20b911,05,485"
         },
         {
           "reason": "still_open",
@@ -337,12 +339,12 @@
         {
           "reason": "strategy",
           "label": "our strategy simply did worse here",
-          "records": 4,
-          "paise": 244700,
-          "display": "\u20b92,447"
+          "records": 3,
+          "paise": 171000,
+          "display": "\u20b91,710"
         }
       ],
-      "deliberate_paise": 150533500,
+      "deliberate_paise": 233896300,
       "recoverable_with_layer_2_paise": 0,
       "still_open_paise": 1210400
     },
@@ -351,18 +353,18 @@
       "naive_incremental_paise": 275018900,
       "naive_incremental_display": "\u20b927,50,189",
       "naive_self_cures_claimed": 21,
-      "ours_recovered_paise": 221708800,
-      "ours_incremental_paise": 198392800,
-      "ours_incremental_display": "\u20b919,83,928",
-      "ours_self_cures_claimed": 10,
+      "ours_recovered_paise": 274465100,
+      "ours_incremental_paise": 189727400,
+      "ours_incremental_display": "\u20b918,97,274",
+      "ours_self_cures_claimed": 17,
       "would_pay_anyway": 34
     },
     "delta": {
-      "recovery_rate_pp": -22.67,
-      "record_recovery_rate_pp": -11.11,
-      "recovered_paise": -254114600,
-      "contacts": -260,
-      "contacts_per_recovery": -2.57,
+      "recovery_rate_pp": -17.96,
+      "record_recovery_rate_pp": -6.67,
+      "recovered_paise": -201358300,
+      "contacts": -249,
+      "contacts_per_recovery": -2.71,
       "compliance_breaches_avoided": 729
     }
   }

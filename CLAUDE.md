@@ -94,7 +94,7 @@ Two invariants must hold as property tests over random batches:
 
 ## Scope discipline
 
-**In V1 (these 4 days):** three leak types, both diagnosis layers, all 13 guardrails,
+**In V1 (these 4 days):** three leak types, both diagnosis layers, all 14 guardrails,
 execution, webhooks, dashboard, audit trail, baseline comparison.
 
 **Deferred to V2 — do not build now:**

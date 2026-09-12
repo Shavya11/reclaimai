@@ -494,7 +494,7 @@ Test mode throughout (`rzp_test_...`).
 ## 12. V1 / V2 split
 
 ### V1 (the four days) — everything above
-Three leak types, both diagnosis layers, full 13 guardrails + tests, execution,
+Three leak types, both diagnosis layers, full 14 guardrails + tests, execution,
 webhooks, dashboard, audit trail, baseline comparison.
 
 Rules were **static YAML loaded at startup**. Not admin-editable.

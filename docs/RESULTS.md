@@ -167,14 +167,14 @@ arrived, and none of it is the agent's.
 | | before | after |
 |---|---:|---:|
 | Written off as unrecoverable | ₹14,06,868 | ₹13,70,992 |
-| Arrived without us | not modelled | ₹25,90,748 |
+| Arrived without us | not modelled | modelled, and quarantined from the headline |
 | Naive baseline, headline | ₹47,58,234 | ₹47,58,234 |
 | Naive baseline, **incremental** | not computable | **₹27,50,189** |
-| Ours, **incremental** | not computable | **₹19,02,912** |
+| Ours, **incremental** | not computable | **₹18,97,274** |
 
 The naive strategy contacts everybody, so it absorbs more self-cures and claims
-them: 21 of its recoveries would have arrived anyway, against 10 of ours. Net of
-that, **roughly two thirds of its apparent lead is money that was coming
+them: 21 of its recoveries would have arrived anyway, against 17 of ours. Net of
+that, **well over half of its apparent lead is money that was coming
 regardless.**
 
 ---
