@@ -160,7 +160,7 @@ scoreboard prints real recovered rupees.
        live minutes before a demo is the option most likely to fail.
     2. Re-pay a link shortly before presenting.
     3. Add the persistent disk — the `disk:` block is already in
-       [render.yaml](render.yaml), commented out. Paid plan.
+       [render.yaml](../render.yaml), commented out. Paid plan.
 - [x] **3.4 Outcome attribution** (1.5h)
   - link paid → find intervention → mark record RECOVERED → attribute ₹
   - This chain is the proof that the recovery was ours
@@ -520,7 +520,7 @@ committed record visible on the dashboard, the queue and the audit trail, and th
 Stop here and the demo works: type, watch, commit, see it land.
 
 *State: complete. 396 tests and 28 verify checks green. See
-[extras/DAY7-HANDOFF.md](extras/DAY7-HANDOFF.md) for the traps, the bugs found on the
+[extras/DAY7-HANDOFF.md](../extras/DAY7-HANDOFF.md) for the traps, the bugs found on the
 way, and the limitations worth knowing before demoing.*
 
 - [x] **7.1 A separate ID space for what a visitor makes** *(1.5h, took ~1h)*.

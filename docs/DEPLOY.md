@@ -57,7 +57,7 @@ absent from the push before it ran, and re-verified before the V2 push.
 ## 1. Render — the API  ✅ DONE
 
 1. render.com → **New** → **Blueprint** → pick the repo. It reads
-   [render.yaml](render.yaml) and creates a service called `reclaimai-api`.
+   [render.yaml](../render.yaml) and creates a service called `reclaimai-api`.
 2. It will prompt for the values marked `sync: false`. Set:
 
    | Variable | Value |

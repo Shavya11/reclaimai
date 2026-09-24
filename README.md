@@ -567,14 +567,14 @@ each flow and each version actually lives:
 V2 also made the rules editable: `rules/` reads the database before the YAML,
 and `rules/validation.py` refuses a bad edit whole.
 
-**[DEMO.md](DEMO.md)** is the five-minute script, with measured command timings.
+**[DEMO.md](docs/DEMO.md)** is the five-minute script, with measured command timings.
 
 ---
 
 ## Deployment
 
 **Render** runs the API and the webhook receiver; **Vercel** serves the
-dashboard. [DEPLOY.md](DEPLOY.md) is the step-by-step.
+dashboard. [DEPLOY.md](docs/DEPLOY.md) is the step-by-step.
 
 **Live:** dashboard at **https://reclaimai-eight.vercel.app**, API and webhook
 receiver at **https://reclaimai-api.onrender.com**.

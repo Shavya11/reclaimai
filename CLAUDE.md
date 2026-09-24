@@ -1,8 +1,8 @@
 # CLAUDE.md — working conventions for this repo
 
 **Project:** ReclaimAI — AI Revenue Recovery Agent for the Razorpay Buildathon (Track 03).
-**Read `PROJECT.md` for the spec and `PLAN.md` for the schedule before doing anything.**
-`PLAN.md` checkboxes are the source of truth for progress — find the first unchecked
+**Read `docs/PROJECT.md` for the spec and `docs/PLAN.md` for the schedule before doing anything.**
+`docs/PLAN.md` checkboxes are the source of truth for progress — find the first unchecked
 item and continue from there. Tick them off as work completes.
 
 Solo developer, 4-day build. Optimise for *working and provable*, not elegant.
@@ -108,7 +108,7 @@ execution, webhooks, dashboard, audit trail, baseline comparison.
 - B2B receivables / overdue invoices + promise-to-pay
 - Hinglish voice channel (roadmap slide only)
 
-If a change would help V2 but costs V1 time, note it in `PROJECT.md` §12 and move on.
+If a change would help V2 but costs V1 time, note it in `docs/PROJECT.md` §12 and move on.
 
 ---
 

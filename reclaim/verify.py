@@ -753,7 +753,7 @@ def _demo_script_records_still_match() -> Check:
     from reclaim.guardrails.rules.value_ceiling import ceiling_for
 
     name = "demo script records still match the batch"
-    script = ROOT / "DEMO.md"
+    script = ROOT / "docs" / "DEMO.md"
     if not script.exists():
         return Check(name, PENDING, "DEMO.md not found")
     text = script.read_text(encoding="utf-8")
