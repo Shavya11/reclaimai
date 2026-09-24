@@ -390,3 +390,50 @@ def test_only_failed_payments_on_sandbox_orders_are_taken_in(razorpay, change, m
 def test_a_payment_claimed_for_the_wrong_order_is_refused(razorpay):
     with pytest.raises(sandbox.CheckoutRefused):
         sandbox.commit_failed_payment(_failure(order_id="order_someone_elses"))
+
+
+def test_a_fallback_unknown_is_not_credited_to_the_model():
+    """With the model down, the engine's fallback writes UNKNOWN. Badging that
+    card as the model would claim a decision no model made."""
+    _seeded_batch()
+    trace = sandbox.preview(_submission(error_reason="payment_failed",
+                                        without_model=True))
+    l2 = [s for s in trace["trace"] if s["stage"] == "DIAGNOSE L2"]
+    assert l2 and l2[0]["output"] == "UNKNOWN"
+    assert l2[0]["decided_by"] != "model"
+
+
+def _preset(label):
+    return next(p for p in sandbox.PRESETS if p["label"] == label)["submission"]
+
+
+def _blocked_by(trace):
+    gate = next(s for s in trace["trace"] if s["stage"] == "GUARDRAILS")
+    return {b["guardrail"] for b in gate["why"].get("blocked_by", [])}
+
+
+def test_the_ceiling_preset_is_refused_by_the_ceiling_not_by_doubt():
+    """It says "diagnosed fine, then refused". An ambiguous reason would reach
+    UNKNOWN first and the ceiling would never be what stopped it."""
+    _seeded_batch()
+    trace = sandbox.preview(sandbox.Submission(
+        **_preset("Above the authority ceiling"), without_model=True))
+    assert "value_ceiling" in _blocked_by(trace)
+    assert "confidence_floor" not in _blocked_by(trace)
+
+
+def test_the_opted_out_preset_is_refused_by_consent():
+    _seeded_batch()
+    trace = sandbox.preview(sandbox.Submission(
+        **_preset("Customer opted out"), without_model=True))
+    assert "consent" in _blocked_by(trace)
+
+
+def test_every_layer_one_preset_resolves_without_the_model():
+    _seeded_batch()
+    for label in ("Bank outage", "Card expired", "International card",
+                  "Customer opted out", "Above the authority ceiling"):
+        trace = sandbox.preview(sandbox.Submission(**_preset(label),
+                                                   without_model=True))
+        l1 = next(s for s in trace["trace"] if s["stage"] == "DIAGNOSE L1")
+        assert l1["output"] != "NO MATCH", label

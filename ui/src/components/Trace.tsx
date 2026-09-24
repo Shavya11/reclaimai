@@ -239,7 +239,9 @@ export function TraceStrip({
           {modelCards === 0
             ? isReply
               ? "No model was reachable for this reply — a fixed keyword match stood in, well below the confidence floor, so it labels the reply for a person rather than pretending to have understood it."
-              : "The model was never consulted — layer 1 resolved this by lookup."
+              : stages.some((s) => s.stage === "DIAGNOSE L2")
+                ? "Layer 1 had no answer and no model was reachable — the fallback chain chose UNKNOWN and a person rather than guess."
+                : "The model was never consulted — layer 1 resolved this by lookup."
             : `${modelCards} of ${stages.length} decisions came from the model. It produced a label; it chose no action, amount, time or recipient.`}
         </p>
       </div>

@@ -220,6 +220,8 @@ export type Trace = {
 export type Preset = {
   label: string;
   hint: string;
+  /** "rules": layer 1 resolves it, so the policy table and the gate act. */
+  group?: "rules" | "other";
   submission: Record<string, unknown>;
 };
 

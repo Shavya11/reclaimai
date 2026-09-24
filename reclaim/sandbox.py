@@ -204,9 +204,16 @@ def _evaluate(record: AtRiskRecord, sub: Submission) -> tuple[Trace, Any, Any]:
             "No error reason in the deterministic map — falls through to layer 2.",
             why={"error_reason":
                  (record.raw_signals.get("error") or {}).get("reason") or ""}))
+        # Only a label the model actually produced carries the model's badge.
+        # With the model down, the engine's fallback wrote this UNKNOWN, and
+        # badging it as the model would credit a decision it never made.
+        from_model = diagnosis.source == "llm"
         trace.stages.append(Stage(
-            "DIAGNOSE L2", "model", diagnosis.root_cause.value,
-            diagnosis.reasoning,
+            "DIAGNOSE L2", "model" if from_model else "table",
+            diagnosis.root_cause.value,
+            f"{diagnosis.reasoning} No model answered — the fallback chain "
+            "chose UNKNOWN rather than guess."
+            if diagnosis.source == "fallback" else diagnosis.reasoning,
             why={"confidence": diagnosis.confidence, "source": diagnosis.source,
                  "evidence_used": diagnosis.evidence_used,
                  "cohort": cohort.as_dict() if hasattr(cohort, "as_dict") else None}))
@@ -355,21 +362,64 @@ def _trace_from_audit(record_id: str) -> Trace:
     return trace
 
 
-# One-click inputs for the dashboard. Three of them are chosen to show a
-# different path through the same machinery rather than three flavours of the
-# same one: a layer-1 hit, a layer-2 fall-through, and a cause the policy table
-# refuses to act on at all.
+# One-click inputs for the dashboard. The first five resolve at layer 1, so the
+# model is never asked and each one lands on a different row of the policy
+# table and a different answer from the gate — the part a visitor can watch
+# change. The last three show the other paths: the model, and a second leak type.
+#
+# CUST_4004 is opted out in the seeded batch (seed 42), which is what makes the
+# consent preset refuse on any clock. The quiet-hours outcome of the link-sending
+# presets depends on the demo clock, and says so.
 PRESETS: list[dict[str, Any]] = [
     {
+        "label": "Bank outage",
+        "group": "rules",
+        "hint": "layer 1 → BANK_DOWNTIME → a silent retry; the gate lets it through",
+        "submission": {"error_reason": "bank_technical_error",
+                       "error_code": "GATEWAY_ERROR",
+                       "text": "Issuer bank timed out during authorisation.",
+                       "amount_paise": 320_000},
+    },
+    {
         "label": "Card expired",
-        "hint": "a real Razorpay reason — layer 1 resolves it, the model is never asked",
+        "group": "rules",
+        "hint": "layer 1 → a payment link to a new card; quiet hours hold it after 20:00 IST",
         "submission": {"error_reason": "card_expired",
                        "error_code": "BAD_REQUEST_ERROR",
                        "text": "Your card has expired. Please use a different card.",
                        "amount_paise": 249_900},
     },
     {
+        "label": "International card",
+        "group": "rules",
+        "hint": "layer 1 → POLICY_BLOCK → never retried; a person decides",
+        "submission": {"error_reason": "international_transaction_not_allowed",
+                       "error_code": "BAD_REQUEST_ERROR",
+                       "text": "Card issued abroad; international payments are off.",
+                       "amount_paise": 560_000},
+    },
+    {
+        "label": "Customer opted out",
+        "group": "rules",
+        "hint": "the policy wants to send a link; the consent guardrail refuses, permanently",
+        "submission": {"error_reason": "incorrect_otp",
+                       "error_code": "BAD_REQUEST_ERROR",
+                       "text": "Wrong OTP entered; this customer has opted out of contact.",
+                       "amount_paise": 180_000,
+                       "customer_id": "CUST_4004"},
+    },
+    {
+        "label": "Above the authority ceiling",
+        "group": "rules",
+        "hint": "diagnosed by lookup, then refused — the value ceiling sends it to a human",
+        "submission": {"error_reason": "bank_technical_error",
+                       "error_code": "GATEWAY_ERROR",
+                       "text": "High-value order; the issuer timed out.",
+                       "amount_paise": 9_500_000},
+    },
+    {
         "label": "Bank just declined it",
+        "group": "other",
         "hint": "ambiguous — layer 1 has no answer, so layer 2 is consulted",
         "submission": {"error_reason": "payment_failed",
                        "error_code": "BAD_REQUEST_ERROR",
@@ -378,20 +428,15 @@ PRESETS: list[dict[str, Any]] = [
     },
     {
         "label": "Described in English",
+        "group": "other",
         "hint": "no reason code at all — the model reads the sentence",
         "submission": {"text": "Customer says the payment failed twice last night, "
                                "salary comes on the 1st.",
                        "amount_paise": 780_000},
     },
     {
-        "label": "Above the authority ceiling",
-        "hint": "diagnosed fine, then refused — the value ceiling sends it to a human",
-        "submission": {"error_reason": "payment_failed",
-                       "text": "High-value order declined by the bank.",
-                       "amount_paise": 9_500_000},
-    },
-    {
         "label": "Abandoned cart",
+        "group": "other",
         "hint": "no payment was ever attempted — a different leak type entirely",
         "submission": {"leak_type": "ABANDONED_CART",
                        "text": "Order created, checkout never completed.",

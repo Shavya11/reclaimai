@@ -88,6 +88,10 @@ function Classify({ onCommitted }: { onCommitted?: () => void }) {
   const [reason, setReason] = useState("");
   const [amount, setAmount] = useState(250_000);
   const [withoutModel, setWithoutModel] = useState(false);
+  // What a preset sets that the form has no field for: the leak type, the
+  // Razorpay code and the customer. Dropping these is how "Abandoned cart"
+  // used to run as a failed payment with no reason at all.
+  const [active, setActive] = useState<Preset | null>(null);
 
   const [trace, setTrace] = useState<Trace | null>(null);
   const [busy, setBusy] = useState<"" | "preview" | "commit" | "reset">("");
@@ -105,8 +109,15 @@ function Classify({ onCommitted }: { onCommitted?: () => void }) {
       error_reason: reason,
       amount_paise: amount,
       without_model: withoutModel,
+      ...(active
+        ? {
+            leak_type: (active.submission as Submission).leak_type,
+            error_code: (active.submission as Submission).error_code,
+            customer_id: (active.submission as Submission).customer_id,
+          }
+        : {}),
     }),
-    [text, reason, amount, withoutModel],
+    [text, reason, amount, withoutModel, active],
   );
 
   const run = async (mode: "preview" | "commit") => {
@@ -145,8 +156,17 @@ function Classify({ onCommitted }: { onCommitted?: () => void }) {
     setText(String(s.text ?? ""));
     setReason(String(s.error_reason ?? ""));
     setAmount(Number(s.amount_paise ?? 250_000));
+    setActive(preset);
     setTrace(null);
   };
+
+  const groups: Array<[string, Preset[]]> = presets
+    ? [
+        ["Policy table + guardrails act", presets.filter((p) => p.group === "rules")],
+        ["The model, and other paths", presets.filter((p) => p.group !== "rules")],
+      ].filter(([, list]) => (list as Preset[]).length > 0) as Array<[string, Preset[]]>
+    : [];
+  const activeSub = (active?.submission ?? {}) as Submission;
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
@@ -159,18 +179,57 @@ function Classify({ onCommitted }: { onCommitted?: () => void }) {
           {presets === null ? (
             <Skeleton className="h-24" />
           ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {presets.map((p) => (
-                <button
-                  key={p.label}
-                  type="button"
-                  title={p.hint}
-                  onClick={() => applyPreset(p)}
-                  className="cursor-pointer rounded-full border border-line bg-panel px-2.5 py-1.5 text-[11px] text-muted transition-colors hover:border-linestrong hover:text-ink"
-                >
-                  {p.label}
-                </button>
+            <div className="space-y-3">
+              {groups.map(([title, list]) => (
+                <div key={title}>
+                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-dim">
+                    {title}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {list.map((p) => (
+                      <button
+                        key={p.label}
+                        type="button"
+                        title={p.hint}
+                        aria-pressed={active?.label === p.label}
+                        onClick={() => applyPreset(p)}
+                        className={`cursor-pointer rounded-full border px-2.5 py-1.5 text-[11px] transition-colors ${
+                          active?.label === p.label
+                            ? "border-green/40 bg-greenwash text-green"
+                            : "border-line bg-panel text-muted hover:border-linestrong hover:text-ink"
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ))}
+              {active && (
+                <div className="flex items-start gap-2 rounded-2xl border border-line bg-panel2 px-3 py-2">
+                  <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-muted">
+                    {active.hint}
+                    {(activeSub.leak_type || activeSub.customer_id) && (
+                      <span className="num mt-0.5 block text-[10px] text-dim">
+                        {[
+                          activeSub.leak_type && `leak type ${activeSub.leak_type}`,
+                          activeSub.customer_id && `customer ${activeSub.customer_id}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActive(null)}
+                    aria-label="Clear the example"
+                    className="cursor-pointer text-[11px] text-dim hover:text-ink"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -195,12 +254,12 @@ function Classify({ onCommitted }: { onCommitted?: () => void }) {
               <input
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="card_expired"
+                placeholder="e.g. card_expired"
                 className="num mt-1.5 w-full rounded-2xl border border-line bg-panel2 px-3 py-2 text-[13px] text-ink outline-none focus:border-linestrong"
               />
               <span className="mt-1 block text-[10px] leading-snug text-dim">
-                Leave it empty and layer 1 has nothing to look up, so the model
-                is asked instead.
+                Only exact Razorpay codes match layer 1. Leave it empty, or use
+                an ambiguous one like payment_failed, and the model is asked.
               </span>
             </label>
             <label className="block">
