@@ -164,7 +164,7 @@ function StageRow({
             <span aria-hidden className="mr-1 opacity-70">
               {decider.glyph}
             </span>
-            {isModel ? "AI model" : decider.label}
+            {decider.label}
           </span>
         </div>
 

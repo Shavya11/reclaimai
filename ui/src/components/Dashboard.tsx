@@ -66,6 +66,9 @@ const inrShort = (paise: number) => {
   return `₹${r.toFixed(0)}`;
 };
 
+// The rest sit behind a toggle so this card is no taller than its neighbours.
+const RAILS_SHOWN = 5;
+
 export default function Dashboard({
   board,
   onDrill,
@@ -75,6 +78,7 @@ export default function Dashboard({
 }) {
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [failed, setFailed] = useState(false);
+  const [showAllRails, setShowAllRails] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -316,7 +320,7 @@ export default function Dashboard({
           ) : (
             <>
               <ul className="space-y-3">
-                {held.map(([name, records, refusals]) => (
+                {(showAllRails ? held : held.slice(0, RAILS_SHOWN)).map(([name, records, refusals]) => (
                   <RailBar
                     key={name}
                     label={name}
@@ -327,6 +331,18 @@ export default function Dashboard({
                   />
                 ))}
               </ul>
+              {held.length > RAILS_SHOWN && (
+                <button
+                  type="button"
+                  aria-expanded={showAllRails}
+                  onClick={() => setShowAllRails((v) => !v)}
+                  className="mt-3 w-full cursor-pointer rounded-full border border-line bg-panel2 py-1.5 text-[11px] font-medium text-muted transition-colors hover:border-linestrong hover:text-ink"
+                >
+                  {showAllRails
+                    ? "Show the top five"
+                    : `Show all ${held.length} rules that fired`}
+                </button>
+              )}
               <ChartNote>
                 Every action the agent wanted to take and was not allowed to.
                 The blocks are the point, not the exceptions.
@@ -372,7 +388,7 @@ export default function Dashboard({
 
       {/* --- the punchline ----------------------------------------------- */}
       <div className="md:col-span-6 lg:col-span-3">
-        <Card tone="deep" className="h-full">
+        <Card tone="deep" className="h-full" bodyClass="flex flex-col">
           <p className="text-[13px] font-medium text-ondeep/80">
             Compliance breaches
           </p>
@@ -384,38 +400,53 @@ export default function Dashboard({
             structural property of putting the gate above the channel.
           </p>
 
-          {comparison && (
-            <div className="mt-5 border-t border-ondeep/15 pt-4">
-              <p className="text-[11px] font-medium text-ondeep/80">
-                The naive run commits{" "}
-                <span className="num font-bold on-deep">
-                  {comparison.baseline.compliance_breaches}
-                </span>
-              </p>
-              <ul className="mt-2.5 space-y-1.5">
-                {(
-                  [
-                    ["To opted-out customers", comparison.baseline.contacts_to_opted_out],
-                    ["To numbers on DND", comparison.baseline.contacts_to_dnd],
-                    ["Inside quiet hours", comparison.baseline.contacts_in_quiet_hours],
-                    ["Over the frequency cap", comparison.baseline.customers_over_frequency_cap],
-                  ] as Array<[string, number]>
-                ).map(([label, n]) => (
-                  <li
-                    key={label}
-                    className="flex items-baseline justify-between gap-3 text-[11px]"
-                  >
-                    <span className="text-ondeep/70">{label}</span>
-                    <span className="num font-semibold on-deep">{n}</span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-3 text-[11px] leading-relaxed text-ondeep/75">
-                Plus {comparison.baseline.retries_against_never_retry} retries on
-                causes an issuer reads as card testing.
-              </p>
-            </div>
-          )}
+          {comparison && (() => {
+            const b = comparison.baseline;
+            const rows: Array<[string, number]> = [
+              ["Inside quiet hours", b.contacts_in_quiet_hours],
+              ["Over the frequency cap", b.customers_over_frequency_cap],
+              ["To numbers on DND", b.contacts_to_dnd],
+              ["To opted-out customers", b.contacts_to_opted_out],
+            ];
+            const top = Math.max(1, ...rows.map(([, n]) => n));
+            return (
+              <div className="mt-auto pt-5">
+                <div className="border-t border-ondeep/15 pt-4">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="text-[11px] font-medium text-ondeep/80">
+                      The naive run commits
+                    </p>
+                    <p className="num text-[22px] font-bold leading-none on-deep">
+                      {b.compliance_breaches}
+                    </p>
+                  </div>
+                  <ul className="mt-3 space-y-2.5">
+                    {rows.map(([label, n]) => (
+                      <li key={label}>
+                        <div className="flex items-baseline justify-between gap-3 text-[11px]">
+                          <span className="text-ondeep/70">{label}</span>
+                          <span className="num font-semibold on-deep">{n}</span>
+                        </div>
+                        <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-ondeep/10">
+                          <div
+                            className="h-full rounded-full bg-ondeep/60"
+                            style={{ width: `${Math.max(3, (n / top) * 100)}%` }}
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-3 text-[11px] leading-relaxed text-ondeep/75">
+                    Plus{" "}
+                    <span className="num font-semibold on-deep">
+                      {b.retries_against_never_retry}
+                    </span>{" "}
+                    retries on causes an issuer reads as card testing.
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
         </Card>
       </div>
 
