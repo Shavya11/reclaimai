@@ -1,6 +1,6 @@
 "use client";
 
-// The trace strip — one card per stage, filling left to right.
+// The trace — one row per stage, top to bottom, on a single spine.
 //
 // The reason this component exists is the badge. CLAUDE.md's one rule is that
 // the model never touches money: it produces a label, a deterministic table
@@ -115,48 +115,74 @@ function Why({ why }: { why: Record<string, unknown> }) {
   );
 }
 
-function StageCard({ stage }: { stage: TraceStage }) {
+function StageRow({
+  stage,
+  index,
+  last,
+}: {
+  stage: TraceStage;
+  index: number;
+  last: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const decider = DECIDER[stage.decided_by] ?? DECIDER.runner;
+  const isModel = stage.decided_by === "model";
+  const hasWhy = !!Object.keys(stage.why ?? {}).length;
 
   return (
-    <li className="min-w-[228px] flex-1 shrink-0">
-      <div className="flex h-full flex-col rounded-2xl border border-line bg-panel p-3">
-        <div className="flex items-start justify-between gap-2">
+    <li className="relative flex gap-3">
+      {/* The spine: a node per stage, joined top to bottom, so the order reads
+          without a horizontal scroll that hides the last two stages. */}
+      <div className="flex w-7 shrink-0 flex-col items-center">
+        <span
+          className={`num flex h-7 w-7 items-center justify-center rounded-full border text-[11px] font-bold ${decider.className}`}
+          title={decider.blurb}
+        >
+          {index + 1}
+        </span>
+        {!last && <span aria-hidden className="w-px flex-1 bg-line" />}
+      </div>
+
+      <div
+        className={`mb-2 min-w-0 flex-1 rounded-2xl border px-3.5 py-2.5 ${
+          isModel ? "border-amber/40 bg-amberwash/60" : "border-line bg-panel"
+        }`}
+      >
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-dim">
             {stage.stage}
           </p>
+          <p
+            className={`num text-[14px] font-semibold leading-tight ${outcomeTone(stage.output)}`}
+          >
+            {stage.output}
+          </p>
           <span
             title={decider.blurb}
-            className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${decider.className}`}
+            className={`ml-auto shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${decider.className}`}
           >
             <span aria-hidden className="mr-1 opacity-70">
               {decider.glyph}
             </span>
-            {decider.label}
+            {isModel ? "AI model" : decider.label}
           </span>
         </div>
 
-        <p
-          className={`num mt-2 text-[15px] font-semibold leading-tight ${outcomeTone(stage.output)}`}
-        >
-          {stage.output}
-        </p>
-
         {stage.detail && (
-          <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
+          <p className="mt-1 text-[12px] leading-relaxed text-muted">
             {stage.detail}
           </p>
         )}
 
-        {!!Object.keys(stage.why ?? {}).length && (
+        {hasWhy && (
           <>
             <button
               type="button"
+              aria-expanded={open}
               onClick={() => setOpen((v) => !v)}
-              className="mt-auto cursor-pointer pt-2 text-left text-[10px] font-medium text-dim underline-offset-2 hover:text-ink hover:underline"
+              className="mt-1 cursor-pointer text-[10px] font-medium text-dim underline-offset-2 hover:text-ink hover:underline"
             >
-              {open ? "hide the evidence" : "why"}
+              {open ? "hide the evidence" : "show the evidence"}
             </button>
             {open && <Why why={stage.why} />}
           </>
@@ -176,27 +202,58 @@ export function TraceStrip({
   header?: ReactNode;
 }) {
   const modelCards = stages.filter((s) => s.decided_by === "model").length;
+  const tally = (Object.keys(DECIDER) as TraceStage["decided_by"][])
+    .map((k) => [k, stages.filter((s) => s.decided_by === k).length] as const)
+    .filter(([, n]) => n > 0);
+  // Two different flows share this component, and "no model call" means a
+  // different thing in each: a diagnosis trace can resolve at layer 1 (a real
+  // lookup table keyed on the error reason), while a reply trace has no layer
+  // 1 at all — its only fallback is a fixed keyword match, which is a weaker
+  // claim and needs saying as one. Told apart by the first stage's name rather
+  // than a prop, so a caller cannot forget to pass one.
+  const isReply = stages[0]?.stage === "REPLY";
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         {header}
         {verdict && <VerdictPill verdict={verdict} />}
-        <p className="text-[11px] text-dim">
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-line bg-panel2 px-3.5 py-2.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-dim">
+            Who decided
+          </span>
+          {tally.map(([k, n]) => (
+            <span
+              key={k}
+              title={DECIDER[k].blurb}
+              className={`num rounded-full border px-2 py-0.5 text-[10px] font-semibold ${DECIDER[k].className}`}
+            >
+              {DECIDER[k].label} × {n}
+            </span>
+          ))}
+        </div>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-dim">
           {modelCards === 0
-            ? "The model was never consulted — layer 1 resolved this by lookup."
+            ? isReply
+              ? "No model was reachable for this reply — a fixed keyword match stood in, well below the confidence floor, so it labels the reply for a person rather than pretending to have understood it."
+              : "The model was never consulted — layer 1 resolved this by lookup."
             : `${modelCards} of ${stages.length} decisions came from the model. It produced a label; it chose no action, amount, time or recipient.`}
         </p>
       </div>
 
-      {/* Horizontal scroll on its own container, never the page body. */}
-      <div className="mt-3 overflow-x-auto pb-1">
-        <ol className="flex min-w-max items-stretch gap-2">
-          {stages.map((stage, i) => (
-            <StageCard key={`${stage.stage}-${i}`} stage={stage} />
-          ))}
-        </ol>
-      </div>
+      <ol className="mt-3">
+        {stages.map((stage, i) => (
+          <StageRow
+            key={`${stage.stage}-${i}`}
+            stage={stage}
+            index={i}
+            last={i === stages.length - 1}
+          />
+        ))}
+      </ol>
     </div>
   );
 }
