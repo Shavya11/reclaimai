@@ -129,7 +129,8 @@ def _error_block(sub: Submission) -> dict[str, Any] | None:
     }
 
 
-def build_record(sub: Submission, record_id: str) -> AtRiskRecord:
+def build_record(sub: Submission, record_id: str, *,
+                 source_ref: str | None = None) -> AtRiskRecord:
     signals: dict[str, Any] = mark({
         "issuer_bank": sub.issuer_bank,
         "method": sub.method,
@@ -154,7 +155,7 @@ def build_record(sub: Submission, record_id: str) -> AtRiskRecord:
         leak_type=sub.leak_type,
         amount=sub.amount_paise,
         counterparty_id=sub.customer_id or DEFAULT_CUSTOMER,
-        source_ref=f"pay_sandbox_{record_id.lower()}",
+        source_ref=source_ref or f"pay_sandbox_{record_id.lower()}",
         detected_at=now() - timedelta(minutes=5),
         raw_signals=signals,
         state=RecordState.AT_RISK,
@@ -260,7 +261,7 @@ def preview(sub: Submission) -> dict[str, Any]:
     return trace.as_dict()
 
 
-def commit(sub: Submission) -> dict[str, Any]:
+def commit(sub: Submission, *, source_ref: str | None = None) -> dict[str, Any]:
     """The same submission, for real: persisted, then run by the runner.
 
     The trace is read back off the audit log rather than reported from memory,
@@ -276,7 +277,7 @@ def commit(sub: Submission) -> dict[str, Any]:
     with SessionLocal() as session:
         record_id = next_user_id(session)
 
-    record = build_record(sub, record_id)
+    record = build_record(sub, record_id, source_ref=source_ref)
     save_records([record])
 
     result = run_batch(reseed=False, only={record_id}, settle=False,
@@ -748,3 +749,105 @@ GUARDRAIL_SCENARIOS: list[dict[str, Any]] = [
      "hint": "the same key twice is a replay, and replays never execute",
      "hypothetical": {"already_executed": True}},
 ]
+
+
+# --- a real test-mode payment, failed on purpose ------------------------------
+#
+# Everything above starts from a description. This starts from Razorpay: the
+# visitor opens real Checkout on a test order, presses Failure on the test bank
+# page, and the payment Razorpay recorded becomes the record. Nothing about the
+# failure is typed by anybody.
+#
+# The browser only says WHICH payment failed. Why it failed, how much it was for
+# and whether it failed at all are fetched back from Razorpay, because a
+# handler's arguments are whatever the page sends and the error the agent
+# diagnoses has to be the one Razorpay stored.
+
+SANDBOX_RECEIPT_PREFIX = "sbx_"
+
+
+class CheckoutFailure(_Base):
+    order_id: str = Field(min_length=1, max_length=64)
+    payment_id: str = Field(min_length=1, max_length=64)
+
+
+class CheckoutRefused(ValueError):
+    """The payment exists but is not something the sandbox should take in."""
+
+
+def checkout_config() -> dict[str, Any]:
+    from .config import settings
+
+    available = settings.has_razorpay
+    # The key id is public by design — Checkout cannot open without it. The
+    # secret never leaves the server.
+    return {"available": available,
+            "key_id": settings.razorpay_key_id if available else ""}
+
+
+def open_order(amount_paise: int) -> dict[str, Any]:
+    """A test order for Checkout to pay against.
+
+    The receipt is the order's idempotency key and also its passport: only an
+    order carrying the sandbox prefix can be turned into a record later, so the
+    import endpoint cannot be pointed at any other payment on the account.
+    """
+    import uuid
+
+    from .config import settings
+    from .executor.razorpay_client import RazorpayClient
+
+    receipt = f"{SANDBOX_RECEIPT_PREFIX}{uuid.uuid4().hex[:24]}"
+    order = RazorpayClient(dry_run=False).create_order(
+        amount_paise, idempotency_key=receipt,
+        notes={"source": "reclaim_try_it"})
+    return {"order_id": order["id"], "amount_paise": order["amount"],
+            "currency": order.get("currency", "INR"),
+            "key_id": settings.razorpay_key_id}
+
+
+def commit_failed_payment(failure: CheckoutFailure) -> dict[str, Any]:
+    from .db import AtRiskRecordRow, SessionLocal, init_db
+    from .executor.razorpay_client import RazorpayClient
+
+    client = RazorpayClient(dry_run=False)
+    payment = client.fetch_payment(failure.payment_id)
+    if payment.get("order_id") != failure.order_id:
+        raise CheckoutRefused("That payment does not belong to that order.")
+    order = client.fetch_order(failure.order_id)
+    if not str(order.get("receipt") or "").startswith(SANDBOX_RECEIPT_PREFIX):
+        raise CheckoutRefused("Only orders opened from the Try-it tab can be imported.")
+    if payment.get("status") != "failed":
+        raise CheckoutRefused(
+            f"Razorpay says this payment is {payment.get('status')!r}, not failed "
+            "— there is nothing to recover.")
+
+    razorpay = {"payment_id": payment["id"], "order_id": failure.order_id,
+                "amount_paise": int(payment["amount"]),
+                "method": payment.get("method"),
+                "error_code": payment.get("error_code"),
+                "error_reason": payment.get("error_reason"),
+                "error_description": payment.get("error_description"),
+                "error_source": payment.get("error_source"),
+                "error_step": payment.get("error_step")}
+
+    # Checkout fires payment.failed once per attempt, and a retry of the import
+    # must not become a second record for the same failure.
+    init_db()
+    with SessionLocal() as session:
+        existing = (session.query(AtRiskRecordRow)
+                    .filter(AtRiskRecordRow.source_ref == payment["id"]).first())
+    if existing is not None:
+        trace = _trace_from_audit(existing.id)
+        trace.committed = True
+        return trace.as_dict() | {"razorpay": razorpay, "already_imported": True}
+
+    sub = Submission(
+        text=payment.get("error_description") or "Payment failed at checkout.",
+        error_code=payment.get("error_code") or "",
+        error_reason=payment.get("error_reason") or "",
+        amount_paise=int(payment["amount"]),
+        method=payment.get("method") or "card",
+        issuer_bank=payment.get("bank") or payment.get("wallet") or "unknown",
+    )
+    return commit(sub, source_ref=payment["id"]) | {"razorpay": razorpay}

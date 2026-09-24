@@ -312,3 +312,81 @@ def test_the_sandbox_diagnoser_is_shared_so_the_cache_survives():
     the instance, so the sandbox never had one. Every preview was a live API
     call, and identical input could come back diagnosed differently."""
     assert sandbox._shared_llm() is sandbox._shared_llm()
+
+
+# --- a real Checkout failure, fetched back from Razorpay -----------------------
+
+
+class _FakeRazorpay:
+    """What Razorpay would say about one order and one payment."""
+
+    def __init__(self, *, receipt="sbx_abc", status="failed", order_id="order_1"):
+        self.order = {"id": order_id, "receipt": receipt}
+        self.payment = {"id": "pay_1", "order_id": order_id, "status": status,
+                        "amount": 400_000, "method": "netbanking", "bank": "HDFC",
+                        "error_code": "BAD_REQUEST_ERROR",
+                        "error_reason": "card_expired",
+                        "error_description": "Your card has expired.",
+                        "error_source": "customer",
+                        "error_step": "payment_authorization"}
+
+    def __call__(self, *_a, **_kw):
+        return self
+
+    def fetch_payment(self, payment_id):
+        return self.payment
+
+    def fetch_order(self, order_id):
+        return self.order
+
+
+@pytest.fixture
+def razorpay(monkeypatch):
+    fake = _FakeRazorpay()
+    monkeypatch.setattr("reclaim.executor.razorpay_client.RazorpayClient", fake)
+    monkeypatch.setattr(sandbox, "_resolve_llm", lambda: None)
+    return fake
+
+
+def _failure(**kw):
+    return sandbox.CheckoutFailure(**{"order_id": "order_1", "payment_id": "pay_1", **kw})
+
+
+def test_a_checkout_failure_becomes_a_record_built_from_what_razorpay_stored(razorpay):
+    _seeded_batch()
+    result = sandbox.commit_failed_payment(_failure())
+
+    assert result["committed"] and result["record_id"].startswith(USER_PREFIX)
+    with SessionLocal() as session:
+        row = session.get(AtRiskRecordRow, result["record_id"])
+    assert row.source_ref == "pay_1"
+    assert row.amount == 400_000
+    assert row.raw_signals["error"]["reason"] == "card_expired"
+
+
+def test_the_same_failed_payment_imported_twice_is_one_record(razorpay):
+    _seeded_batch()
+    first = sandbox.commit_failed_payment(_failure())
+    before = _counts()
+    second = sandbox.commit_failed_payment(_failure())
+
+    assert second["already_imported"] and second["record_id"] == first["record_id"]
+    assert _counts() == before
+
+
+@pytest.mark.parametrize("change, message", [
+    ({"receipt": "rcpt_merchant_real"}, "Try-it"),
+    ({"status": "captured"}, "nothing to recover"),
+])
+def test_only_failed_payments_on_sandbox_orders_are_taken_in(razorpay, change, message):
+    razorpay.order["receipt"] = change.get("receipt", razorpay.order["receipt"])
+    razorpay.payment["status"] = change.get("status", "failed")
+    before = _counts()
+    with pytest.raises(sandbox.CheckoutRefused, match=message):
+        sandbox.commit_failed_payment(_failure())
+    assert _counts() == before
+
+
+def test_a_payment_claimed_for_the_wrong_order_is_refused(razorpay):
+    with pytest.raises(sandbox.CheckoutRefused):
+        sandbox.commit_failed_payment(_failure(order_id="order_someone_elses"))

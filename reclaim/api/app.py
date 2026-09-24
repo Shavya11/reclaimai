@@ -805,6 +805,60 @@ def sandbox_guardrails(body: dict[str, Any] = Body(default={})) -> dict[str, Any
     return sandbox.simulate_guardrails(hypothetical)
 
 
+@app.get("/api/sandbox/checkout")
+def sandbox_checkout_config() -> dict[str, Any]:
+    from .. import sandbox
+
+    return sandbox.checkout_config()
+
+
+@app.post("/api/sandbox/checkout/order", status_code=201)
+def sandbox_checkout_order(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """A real test-mode order for Razorpay Checkout to open against."""
+    from .. import sandbox
+    from ..executor.razorpay_client import RazorpayError
+
+    try:
+        amount = int(body.get("amount_paise") or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="amount_paise must be an integer") from exc
+    # ₹1 is Razorpay's floor; the ceiling is the sandbox's, not Razorpay's.
+    if not 100 <= amount <= 10_000_000_00:
+        raise HTTPException(status_code=422, detail="amount_paise out of range")
+    if not sandbox.checkout_config()["available"]:
+        raise HTTPException(status_code=503,
+                            detail="No rzp_test_ credentials on this server.")
+    try:
+        return sandbox.open_order(amount)
+    except RazorpayError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/sandbox/checkout/failed", status_code=201)
+def sandbox_checkout_failed(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """A payment that failed in real Checkout, fetched back from Razorpay and
+    committed as a record — the same path as a typed submission from there on."""
+    from .. import sandbox
+    from ..executor.razorpay_client import RazorpayError
+
+    try:
+        failure = sandbox.CheckoutFailure(**body)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if not _begin("importing a failed payment"):
+        raise HTTPException(status_code=409,
+                            detail=f"Already busy: {_seed_state['stage']}.")
+    try:
+        return sandbox.commit_failed_payment(failure)
+    except sandbox.CheckoutRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RazorpayError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        _end()
+
+
 @app.get("/api/evidence")
 def evidence_index() -> dict[str, Any]:
     """Every claim the Evidence tab renders, with its measurement when one has

@@ -21,6 +21,7 @@ import { Badge, Button, Card, Empty, Skeleton } from "@/components/ui";
 import { TraceStrip } from "@/components/Trace";
 import { ReplyLab } from "@/components/ReplyLab";
 import { GuardrailLab } from "@/components/Guardrails";
+import { CheckoutLab } from "@/components/CheckoutLab";
 
 const RUPEE = "₹";
 
@@ -30,10 +31,11 @@ function rupees(paise: number): string {
   })}`;
 }
 
-type Mode = "classify" | "reply" | "guardrails";
+type Mode = "classify" | "checkout" | "reply" | "guardrails";
 
 const MODES: Array<[Mode, string, string]> = [
   ["classify", "Classify a failure", "diagnose it, decide, and gate it"],
+  ["checkout", "Fail a real payment", "Razorpay test Checkout, then the agent"],
   ["reply", "Read a reply", "and watch the agent go quiet"],
   ["guardrails", "Point the rules at something", "all fourteen, pass or refuse"],
 ];
@@ -69,6 +71,8 @@ export function TryIt({ onCommitted }: { onCommitted?: () => void }) {
 
       {mode === "classify" ? (
         <Classify onCommitted={onCommitted} />
+      ) : mode === "checkout" ? (
+        <CheckoutLab onCommitted={onCommitted} />
       ) : mode === "reply" ? (
         <ReplyLab />
       ) : (

@@ -122,6 +122,24 @@ class RazorpayClient:
                   "status": "created"},
         )
 
+    # -- reads ---------------------------------------------------------------
+    # No idempotency key: fetching twice changes nothing. DRY_RUN has no remote
+    # to read from, so a read there is a mistake rather than something to stub.
+
+    def fetch_payment(self, payment_id: str) -> dict[str, Any]:
+        return self._read("payment.fetch", lambda: self._client.payment.fetch(payment_id))
+
+    def fetch_order(self, order_id: str) -> dict[str, Any]:
+        return self._read("order.fetch", lambda: self._client.order.fetch(order_id))
+
+    def _read(self, op: str, call: Callable[[], Any]) -> dict[str, Any]:
+        if self.dry_run or self._client is None:
+            raise RazorpayError(f"{op} needs live rzp_test_ credentials")
+        try:
+            return call()
+        except Exception as exc:  # noqa: BLE001 - SDK raises a wide surface
+            raise RazorpayError(f"{op} failed: {exc}") from exc
+
     # -- plumbing ------------------------------------------------------------
 
     def _write(
