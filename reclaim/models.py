@@ -5,10 +5,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .enums import (
+from reclaim.enums import (
     ActionType, Channel, LeakType, RecordState, ReplyIntent, RootCause,
 )
-from .timeutil import to_ist
+from reclaim.timeutil import to_ist
 
 
 class _Base(BaseModel):

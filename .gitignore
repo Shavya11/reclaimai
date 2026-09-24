@@ -39,11 +39,11 @@ user.env
 .deploy_secrets
 
 # rendered demo media — hundreds of MB, regenerate with video/build.py
-video/out/
-video/clips/
-video/voice/
-video/stills/
-video/__pycache__/
+extras/video/out/
+extras/video/clips/
+extras/video/voice/
+extras/video/stills/
+extras/video/__pycache__/
 
 # private working material — reports, review notes, anything not for the repo
 private/

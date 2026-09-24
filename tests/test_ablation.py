@@ -7,7 +7,7 @@ refuses to print. These assert it refuses.
 """
 
 from reclaim.enums import RecordState, RootCause
-from reclaim.experiments.ablation import (
+from reclaim.measure.ablation import (
     VOID_THRESHOLD, Ablation, Arm, RecordOutcome, _bootstrap_ci,
 )
 

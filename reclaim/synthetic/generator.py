@@ -9,11 +9,11 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from ..enums import LeakType, RecordState, RootCause
-from ..models import AtRiskRecord
-from ..timeutil import IST, now
-from . import error_codes as ec
-from .outcomes import SELF_CURE, SELF_CURE_WINDOW_DAYS
+from reclaim.enums import LeakType, RecordState, RootCause
+from reclaim.models import AtRiskRecord
+from reclaim.timeutil import IST, now
+from reclaim.synthetic import error_codes as ec
+from reclaim.synthetic.outcomes import SELF_CURE, SELF_CURE_WINDOW_DAYS
 
 
 def batch_epoch(at=None):

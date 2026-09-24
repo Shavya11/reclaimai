@@ -12,9 +12,9 @@ Gemini is worse than no second provider at all.
 
 import pytest
 
-from reclaim.brain.diagnosis.engine import diagnose_one
-from reclaim.brain.diagnosis.gemini_diagnoser import TOOL_NAME, GeminiDiagnoser
-from reclaim.brain.diagnosis.llm_diagnoser import (
+from reclaim.diagnose.engine import diagnose_one
+from reclaim.diagnose.gemini_diagnoser import TOOL_NAME, GeminiDiagnoser
+from reclaim.diagnose.llm_diagnoser import (
     DIAGNOSIS_TOOL, SYSTEM_PROMPT, prompt_for, tool_for,
 )
 from reclaim.enums import LeakType, RootCause

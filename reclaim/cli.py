@@ -9,14 +9,14 @@ import json
 import sys
 from collections import Counter
 
-from . import console
-from .config import ROOT, settings
-from .db import init_db
-from .detectors import REGISTRY, detect_all
-from .money import format_inr, format_inr_short
-from .repository import save_batch
-from .synthetic import generate
-from .verify import FAIL, PASS, PENDING, run_all
+from reclaim import console
+from reclaim.config import ROOT, settings
+from reclaim.db import init_db
+from reclaim.detect import REGISTRY, detect_all
+from reclaim.money import format_inr, format_inr_short
+from reclaim.repository import save_batch
+from reclaim.synthetic import generate
+from reclaim.verify import FAIL, PASS, PENDING, run_all
 
 GREEN, RED, YELLOW, DIM, BOLD, OFF = (
     "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[1m", "\033[0m"
@@ -99,7 +99,7 @@ def cmd_verify(args) -> int:
 
 
 def cmd_harvest(args) -> int:
-    from .harvest import FIXTURE, collect, create
+    from reclaim.harvest import FIXTURE, collect, create
 
     if args.collect:
         payload = collect()
@@ -147,7 +147,7 @@ def _client(args):
     than a code edit performed live."""
     if not getattr(args, "kill_razorpay", False):
         return None
-    from .executor.razorpay_client import DeadRazorpayClient
+    from reclaim.execute.razorpay_client import DeadRazorpayClient
 
     return DeadRazorpayClient()
 
@@ -160,13 +160,13 @@ def _diagnoser(args):
     demo should run what the document claims."""
     if getattr(args, "no_llm", False):
         return None
-    from .brain.diagnosis.llm_diagnoser import LLMDiagnoser
+    from reclaim.diagnose.llm_diagnoser import LLMDiagnoser
 
     llm = LLMDiagnoser()
     if llm.available:
         return llm
 
-    from .brain.diagnosis.gemini_diagnoser import GeminiDiagnoser
+    from reclaim.diagnose.gemini_diagnoser import GeminiDiagnoser
 
     gem = GeminiDiagnoser()
     return gem if gem.available else None
@@ -181,14 +181,14 @@ def _extractor(args):
     line, which is the only place anyone would test it."""
     if getattr(args, "no_llm", False):
         return None
-    from .brain.conversation import build_extractor
+    from reclaim.diagnose.conversation import build_extractor
 
     return build_extractor()
 
 
 def cmd_diagnose(args) -> int:
-    from .brain.diagnosis.accuracy import cohort_counterfactual, score
-    from .brain.diagnosis.engine import diagnose_batch
+    from reclaim.diagnose.accuracy import cohort_counterfactual, score
+    from reclaim.diagnose.engine import diagnose_batch
 
     batch = generate(seed=args.seed)
     llm = _diagnoser(args)
@@ -245,16 +245,15 @@ def cmd_diagnose(args) -> int:
 def cmd_plan(args) -> int:
     """Day 2 checkpoint: a proposed action for every record, with the policy row
     that decided it. Nothing is executed."""
-    from .brain.diagnosis.engine import diagnose_batch
-    from .brain.policy import decide
+    from reclaim.diagnose.engine import diagnose_batch
+    from reclaim.decide import decide
 
     batch = generate(seed=args.seed)
     llm = _diagnoser(args)
     diagnoses, _ = diagnose_batch(batch.records, batch.traffic, llm=llm)
     actions = [decide(r, diagnoses[r.id]) for r in batch.records]
 
-    from .brain import gate
-
+    from reclaim.guardrails import gate
     report = gate.run(batch.records, diagnoses, actions,
                       {c.id: c for c in batch.customers})
 
@@ -326,7 +325,7 @@ def cmd_plan(args) -> int:
 
 
 def cmd_run_batch(args) -> int:
-    from .runner import BatchCrashed, run_batch
+    from reclaim.runner import BatchCrashed, run_batch
 
     crashed = None
     try:
@@ -434,7 +433,7 @@ def _scoreboard_lines(board, indent: str = "  ") -> list[str]:
 
 
 def cmd_scoreboard(args) -> int:
-    from .scoreboard import compute
+    from reclaim.measure.scoreboard import compute
 
     board = compute()
     if args.json:
@@ -449,8 +448,8 @@ def cmd_scoreboard(args) -> int:
 
 def cmd_tick(args) -> int:
     """Advance the demo clock and run again. Deferred work lands here."""
-    from . import clock
-    from .runner import tick
+    from reclaim import clock
+    from reclaim.runner import tick
 
     before = clock.now()
     result, at = tick(advance=args.advance, seed=args.seed, llm=_diagnoser(args),
@@ -479,7 +478,7 @@ def cmd_tick(args) -> int:
 
 
 def cmd_clock(args) -> int:
-    from . import clock
+    from reclaim import clock
 
     if args.reset:
         clock.reset()
@@ -498,7 +497,7 @@ def cmd_clock(args) -> int:
 
 def cmd_baseline(args) -> int:
     """PROJECT.md 9: 35% alone means nothing; 35% against 19% means everything."""
-    from .baseline import compare
+    from reclaim.measure.baseline import compare
 
     comparison = compare(seed=args.seed)
     d = comparison.as_dict()
@@ -555,10 +554,10 @@ def cmd_baseline(args) -> int:
 
 def cmd_demo(args) -> int:
     """The whole arc, start to finish. Used to rehearse and to capture metrics."""
-    from . import clock
-    from .baseline import compare
-    from .runner import DEMO_ARC, run_batch, tick
-    from .scoreboard import compute
+    from reclaim import clock
+    from reclaim.measure.baseline import compare
+    from reclaim.runner import DEMO_ARC, run_batch, tick
+    from reclaim.measure.scoreboard import compute
 
     _reset_database()
     clock.reset()
@@ -628,7 +627,7 @@ def cmd_snapshot(args) -> int:
     Committing the settled result makes the boot instant and the numbers exactly
     the ones the README publishes — because the same runner produced both.
     """
-    from . import snapshot
+    from reclaim import snapshot
 
     llm = _diagnoser(args)
     if llm is None and not args.no_llm:
@@ -678,8 +677,8 @@ def cmd_prove_idempotency(args) -> int:
     the agent cannot double-charge is demonstrated, not asserted."""
     from sqlalchemy import func
 
-    from .db import ExecutedActionRow, SessionLocal
-    from .runner import BatchCrashed, run_batch
+    from reclaim.db import ExecutedActionRow, SessionLocal
+    from reclaim.runner import BatchCrashed, run_batch
 
     _reset_database()
     print()
@@ -733,8 +732,8 @@ def cmd_ablation(args) -> int:
     still produces a plausible-looking number, which is exactly the number that
     ships by accident on a deadline.
     """
-    from .experiments import ablation
-    from .money import format_inr
+    from reclaim.measure import ablation
+    from reclaim.money import format_inr
 
     print(f"\n{BOLD}LAYER-2 ABLATION{OFF}  {DIM}two arcs, scratch databases, "
           f"same seed, live diagnosis{OFF}")
@@ -811,9 +810,9 @@ def cmd_replay(args) -> int:
     Overrides are given as `section.key=value` so the demo can be driven from
     one line: `cli replay --guardrail value_ceiling.requires_human_above=7500000`.
     """
-    from . import whatif
-    from .brain.validation import RuleInvalid
-    from .money import format_inr
+    from reclaim.measure import whatif
+    from reclaim.rules.validation import RuleInvalid
+    from reclaim.money import format_inr
 
     payload: dict = {"guardrails": {}, "policies": {}}
     for raw in args.guardrail or []:
@@ -914,8 +913,7 @@ def cmd_evidence(args) -> int:
     refusal as though it were a measurement would launder the exact number the
     void condition exists to suppress.
     """
-    from . import evidence
-
+    from reclaim.measure import evidence
     seed = args.seed if getattr(args, "seed", None) is not None else settings.seed
     only = set(args.only.split(",")) if getattr(args, "only", None) else None
     written, skipped = [], []
@@ -933,14 +931,13 @@ def cmd_evidence(args) -> int:
         written.append(evidence.write("verify", payload, seed=seed))
 
     if wanted("baseline"):
-        from .baseline import compare
+        from reclaim.measure.baseline import compare
 
         written.append(evidence.write("baseline", compare(seed=seed).as_dict(),
                                       seed=seed))
 
     if wanted("ablation"):
-        from .experiments import ablation
-
+        from reclaim.measure import ablation
         print(f"  {DIM}running the ablation — real model calls, a few "
               f"minutes{OFF}")
         data = ablation.run(seed=seed).as_dict()
@@ -960,8 +957,7 @@ def cmd_evidence(args) -> int:
 
 def cmd_rules(args) -> int:
     """Show the rule table and whether each row is shipped or edited."""
-    from . import admin
-
+    from reclaim.rules import admin
     if args.reset:
         print(f"  restored {admin.reset()} rules to the shipped defaults\n")
         return 0
@@ -1002,7 +998,7 @@ def cmd_rules(args) -> int:
 def cmd_trace(args) -> int:
     """The brief's worked example: one record, detection to confirmed money,
     on one screen. Read from storage, never recomputed."""
-    from .trace import trace
+    from reclaim.measure.trace import trace
 
     init_db()
     data = trace(args.record_id)
@@ -1103,9 +1099,9 @@ def _wrap(text: str, width: int) -> str:
 def cmd_promises(args) -> int:
     """The promise book. Open promises are the agent deliberately silent, which
     is the one thing a dashboard cannot render as activity."""
-    from .db import PromiseRow, SessionLocal
-    from .money import format_inr
-    from .promises import counts
+    from reclaim.db import PromiseRow, SessionLocal
+    from reclaim.money import format_inr
+    from reclaim.measure.promises import counts
 
     tally = counts()
     with SessionLocal() as session:
@@ -1143,7 +1139,7 @@ def cmd_promises(args) -> int:
 
 def _reset_database() -> None:
     """The demo clock lives in the same database file, so it resets with it."""
-    from .db import reset_database
+    from reclaim.db import reset_database
 
     reset_database()
 

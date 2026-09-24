@@ -105,7 +105,7 @@ AtRiskRecord:
 2. **Policy is data** — `policies.yaml` keyed by `leak_type` then `root_cause`
 3. **Channels are abstracted** — `send(channel, recipient, message)`;
    guardrails live ABOVE the channel so a new channel (voice) inherits them free
-4. **Rules load through one module** (`brain/rules.py`) — V2 swaps the loader for DB
+4. **Rules load through one module** (`rules/__init__.py`) — V2 swaps the loader for DB
 
 ---
 
@@ -236,7 +236,7 @@ Classify ONE failed payment into exactly one root cause.
 
 ---
 
-## 6. Policy table (data, not code — `brain/policy/policies.yaml`)
+## 6. Policy table (data, not code — `decide/policies.yaml`)
 
 ```yaml
 FAILED_PAYMENT:
@@ -509,7 +509,7 @@ and §12c explains why it is a better slide now than it was.
 **a) Dynamic rule configuration — SHIPPED**
 - `policy_rules`, `guardrail_config`, `rule_change_log` in `db.py`.
   `rule_change_log` carries the same append-only triggers as `audit_log`.
-- `brain/rules.py` reads the database first and falls back to the YAML, which
+- `rules/__init__.py` reads the database first and falls back to the YAML, which
   remains the default and the reset target. **`policies()`, `guardrail_config()`,
   `policy_for()` and `threshold()` kept their exact signatures, so not one call
   site in diagnosis, policy or the guardrails changed.** That was V1's bet and
@@ -519,7 +519,7 @@ and §12c explains why it is a better slide now than it was.
 - Admin API: `GET /api/admin/rules`, `POST /api/admin/policy/{leak}/{cause}`,
   `POST /api/admin/guardrail/{name}`, `GET /api/admin/changes`,
   `POST /api/admin/reset`, `POST /api/admin/replay`.
-- `brain/validation.py` is the load-bearing part. A merchant must not be able to
+- `rules/validation.py` is the load-bearing part. A merchant must not be able to
   type a rule that kills tonight's batch, so every edit is validated by REUSING
   the code that will consume it — a schedule token is valid if `schedule.resolve`
   parses it, a strategy if `STRATEGY_TO_ACTION` maps it. Unknown keys are refused
@@ -562,7 +562,7 @@ and §12c explains why it is a better slide now than it was.
   is how a scoreboard starts counting sentences as rupees.
 - DSO on the scoreboard, value-weighted, alongside promises made/kept/broken.
 
-**The conversation layer** — `brain/conversation/`. The model gained a second
+**The conversation layer** — `diagnose/conversation/`. The model gained a second
 job and it is the same job as the first: turn a sentence into one label from a
 closed enum (`ReplyIntent`, seven members) with an honest confidence. A
 deterministic table in `handler.py` decides what the label MEANS, exactly as
@@ -614,7 +614,7 @@ events from the boot seed.
 
 The receiver, the HMAC-SHA256 verification and the attribution chain are
 production code carrying 19 tests. What stands in for a delivery day to day is
-`reclaim/settlement.py`: it signs Razorpay-shaped payloads and posts them through
+`reclaim/measure/settlement.py`: it signs Razorpay-shaped payloads and posts them through
 the same `receive()` a real delivery hits, so nothing bypasses the signature check
 or the walk from `payment_link.paid` back to the intervention that minted the
 link. The outcome simulator decides only *whether the customer paid* — the

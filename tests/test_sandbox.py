@@ -25,11 +25,11 @@ from reclaim.db import (
     AtRiskRecordRow, AuditLogRow, ExecutedActionRow, InterventionRow,
     SessionLocal, reset_database,
 )
-from reclaim.brain.conversation.intent import keyword_reading
+from reclaim.diagnose.conversation.intent import keyword_reading
 from reclaim.enums import LeakType
 from reclaim.provenance import USER_PREFIX, is_user_record
 from reclaim.runner import run_batch
-from reclaim.scoreboard import compute
+from reclaim.measure.scoreboard import compute
 
 
 @pytest.fixture(autouse=True)
@@ -277,7 +277,7 @@ def test_free_text_submissions_do_not_share_one_cache_key():
     submission varies. Three unrelated sentences hashed identically, so a warm
     cache would have answered the second with the first one's diagnosis —
     confidently, and invisibly."""
-    from reclaim.brain.diagnosis.llm_diagnoser import signature
+    from reclaim.diagnose.llm_diagnoser import signature
 
     texts = ["Card has expired, customer needs a new one",
              "Customer disputes this charge entirely",
@@ -293,7 +293,7 @@ def test_the_seeded_batch_keeps_its_cache_grouping():
     would have changed the API-call count the ablation publishes."""
     from collections import defaultdict
 
-    from reclaim.brain.diagnosis.llm_diagnoser import signature
+    from reclaim.diagnose.llm_diagnoser import signature
     from reclaim.synthetic import generate
 
     groups = defaultdict(set)
@@ -343,7 +343,7 @@ class _FakeRazorpay:
 @pytest.fixture
 def razorpay(monkeypatch):
     fake = _FakeRazorpay()
-    monkeypatch.setattr("reclaim.executor.razorpay_client.RazorpayClient", fake)
+    monkeypatch.setattr("reclaim.execute.razorpay_client.RazorpayClient", fake)
     monkeypatch.setattr(sandbox, "_resolve_llm", lambda: None)
     return fake
 

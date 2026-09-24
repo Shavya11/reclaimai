@@ -195,7 +195,7 @@ def test_one_record_has_a_readable_timeline():
 
 def test_a_dead_razorpay_parks_records_instead_of_crashing():
     """Demo beat #6: one failure handled gracefully."""
-    from reclaim.executor.razorpay_client import RazorpayClient, RazorpayError
+    from reclaim.execute.razorpay_client import RazorpayClient, RazorpayError
 
     class Dead(RazorpayClient):
         def __init__(self, *a, **kw):

@@ -12,8 +12,8 @@ output stays honest about what day of the build it is.
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import ROOT
-from .enums import ActionType, LeakType, RootCause
+from reclaim.config import ROOT
+from reclaim.enums import ActionType, LeakType, RootCause
 
 PASS, FAIL, PENDING = "PASS", "FAIL", "PENDING"
 
@@ -30,7 +30,7 @@ class Check:
 
 
 def _outcome_simulator_covers_every_root_cause() -> Check:
-    from .synthetic.outcomes import BASE_SUCCESS
+    from reclaim.synthetic.outcomes import BASE_SUCCESS
 
     missing = [c.value for c in RootCause if c not in BASE_SUCCESS]
     if missing:
@@ -52,12 +52,12 @@ def _policies_cover_every_root_cause() -> Check:
     nobody will ever see execute.
     """
     name = "policies.yaml covers every reachable cause"
-    path = ROOT / "reclaim" / "brain" / "policy" / "policies.yaml"
+    path = ROOT / "reclaim" / "decide" / "policies.yaml"
     if not path.exists():
         return Check(name, PENDING, "policies.yaml not written yet")
     import yaml
 
-    from .enums import CAUSES_FOR_LEAK
+    from reclaim.enums import CAUSES_FOR_LEAK
 
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     problems = []
@@ -82,7 +82,7 @@ def _policies_cover_every_root_cause() -> Check:
 def _every_leak_type_has_a_detector() -> Check:
     """V1's check named three leak types by hand. Naming them by hand is how a
     fourth gets added to the enum and quietly never detected."""
-    from .detectors import REGISTRY
+    from reclaim.detect import REGISTRY
 
     name = "every leak type has a detector"
     covered = {d.leak_type for d in REGISTRY}
@@ -109,8 +109,8 @@ def _sandbox_preview_leaves_no_trace() -> Check:
     somebody needs to hear about it.
     """
     name = "sandbox preview leaves no trace"
-    from . import clock, sandbox
-    from .db import (
+    from reclaim import clock, sandbox
+    from reclaim.db import (
         AtRiskRecordRow, AuditLogRow, ExecutedActionRow, InterventionRow,
         PromiseRow, SessionLocal,
     )
@@ -165,12 +165,12 @@ def _user_records_do_not_move_the_published_figures() -> Check:
 
     name = "visitor records stay out of the published figures"
 
-    from . import clock
-    from . import db as dbmod
-    from .db import AtRiskRecordRow, init_db, use_database
-    from .enums import LeakType, RecordState
-    from .provenance import USER_PREFIX, mark
-    from .scoreboard import compute
+    from reclaim import clock
+    from reclaim import db as dbmod
+    from reclaim.db import AtRiskRecordRow, init_db, use_database
+    from reclaim.enums import LeakType, RecordState
+    from reclaim.provenance import USER_PREFIX, mark
+    from reclaim.measure.scoreboard import compute
 
     def row(rid: str, amount: int, *, user: bool):
         return AtRiskRecordRow(
@@ -231,8 +231,9 @@ def _replay_is_side_effect_free() -> Check:
     demo clock on both sides of it.
     """
     name = "what-if replay leaves no trace"
-    from . import clock, whatif
-    from .db import (
+    from reclaim import clock
+    from reclaim.measure import whatif
+    from reclaim.db import (
         AtRiskRecordRow, AuditLogRow, ExecutedActionRow, InterventionRow,
         PromiseRow, SessionLocal,
     )
@@ -278,8 +279,8 @@ def _shipped_rules_pass_their_own_validator() -> Check:
     """A validator that refuses the defaults is a validator nobody can use, and
     a merchant who resets to defaults would be unable to save anything after."""
     name = "shipped rules pass the admin validator"
-    from .brain import rules
-    from .brain.validation import (
+    from reclaim import rules
+    from reclaim.rules.validation import (
         RuleInvalid, validate_guardrail_config, validate_policy_row,
     )
 
@@ -309,7 +310,7 @@ def _rule_change_log_is_append_only() -> Check:
     name = "rule_change_log is append-only"
     from sqlalchemy import text
 
-    from .db import engine, init_db
+    from reclaim.db import engine, init_db
 
     init_db()
     try:
@@ -335,8 +336,8 @@ def _promise_transitions_are_closed() -> Check:
     date it resolved. An orphan state means a record parked for ever behind
     guardrail 14 with nothing due to wake it."""
     name = "promise states are closed and resolved ones are dated"
-    from .db import PromiseRow, SessionLocal
-    from .enums import PromiseState
+    from reclaim.db import PromiseRow, SessionLocal
+    from reclaim.enums import PromiseState
 
     valid = {s.value for s in PromiseState}
     with SessionLocal() as session:
@@ -370,14 +371,14 @@ def _self_cure_is_identical_across_strategies() -> Check:
     purely bookkeeping reason, which inflated the measured lift.
     """
     name = "self-cure is the same in both arms"
-    from .synthetic import generate
+    from reclaim.synthetic import generate
 
     a, b = generate(seed=42), generate(seed=42)
     if a.self_cure.keys() != b.self_cure.keys():
         return Check(name, FAIL, "two runs of one seed disagree on who pays")
 
     # Nobody who cannot pay is allowed to pay anyway.
-    from .synthetic.outcomes import SELF_CURE
+    from reclaim.synthetic.outcomes import SELF_CURE
 
     impossible = sorted({
         a.truth[rid].value for rid in a.self_cure
@@ -402,8 +403,8 @@ def _no_settled_record_still_sits_in_the_queue() -> Check:
     that paid last week.
     """
     name = "no settled record is still queued for a human"
-    from .db import AtRiskRecordRow, HumanQueueRow, SessionLocal
-    from .enums import RecordState
+    from reclaim.db import AtRiskRecordRow, HumanQueueRow, SessionLocal
+    from reclaim.enums import RecordState
 
     settled = {RecordState.RECOVERED.value, RecordState.CLOSED.value}
     with SessionLocal() as session:
@@ -428,9 +429,9 @@ def _no_settled_record_still_sits_in_the_queue() -> Check:
 # a literal, so a rule that exists as a file but was never registered — the one
 # way a guardrail silently does nothing — fails this check instead of passing it.
 def _every_guardrail_is_registered() -> Check:
-    from .brain.guardrails.registry import GUARDRAIL_NAMES
+    from reclaim.guardrails.registry import GUARDRAIL_NAMES
 
-    d = ROOT / "reclaim" / "brain" / "guardrails" / "rules"
+    d = ROOT / "reclaim" / "guardrails" / "rules"
     files = sorted(p.stem for p in d.glob("*.py") if p.stem != "__init__")
     if not files:
         return Check("guardrails implemented and registered", PENDING,
@@ -449,7 +450,7 @@ def _every_guardrail_is_registered() -> Check:
 
 def _deterministic_map_is_valid() -> Check:
     try:
-        from .brain.diagnosis.deterministic import DETERMINISTIC_MAP
+        from reclaim.diagnose.deterministic import DETERMINISTIC_MAP
     except ImportError:
         return Check("deterministic map yields valid causes", PENDING,
                      "deterministic map not written yet (Day 2, task 2.1)")
@@ -472,7 +473,7 @@ def _deterministic_map_matches_harvested_codes() -> Check:
         return Check(name, PENDING,
                      "no harvested fixture yet — run `cli harvest` (PLAN 1.2)")
 
-    from .brain.diagnosis.deterministic import AMBIGUOUS_REASONS, DETERMINISTIC_MAP
+    from reclaim.diagnose.deterministic import AMBIGUOUS_REASONS, DETERMINISTIC_MAP
 
     codes = json.loads(fixture.read_text(encoding="utf-8")).get("codes", {})
     if not codes:
@@ -488,7 +489,7 @@ def _deterministic_map_matches_harvested_codes() -> Check:
 
 
 def _detectors_cover_v1_leak_types() -> Check:
-    from .detectors import REGISTRY
+    from reclaim.detect import REGISTRY
 
     v1 = {LeakType.FAILED_PAYMENT, LeakType.ABANDONED_CART, LeakType.FAILED_MANDATE}
     covered = {d.leak_type for d in REGISTRY}
@@ -503,7 +504,7 @@ def _detectors_cover_v1_leak_types() -> Check:
 def _audit_log_is_append_only() -> Check:
     from sqlalchemy import text
 
-    from .db import engine, init_db
+    from reclaim.db import engine, init_db
 
     init_db()
     with engine.connect() as conn:
@@ -519,7 +520,7 @@ def _audit_log_is_append_only() -> Check:
 
 
 def _idempotency_is_unique_at_the_database() -> Check:
-    from .db import ExecutedActionRow
+    from reclaim.db import ExecutedActionRow
 
     cons = {c.name for c in ExecutedActionRow.__table__.constraints}
     if "uq_idempotency_key" not in cons:
@@ -530,7 +531,7 @@ def _idempotency_is_unique_at_the_database() -> Check:
 
 
 def _money_is_integer_paise() -> Check:
-    from .models import AtRiskRecord, ProposedAction
+    from reclaim.models import AtRiskRecord, ProposedAction
 
     for model in (AtRiskRecord, ProposedAction):
         if model.model_fields["amount"].annotation is not int:
@@ -540,7 +541,7 @@ def _money_is_integer_paise() -> Check:
 
 
 def _record_stays_generic() -> Check:
-    from .models import AtRiskRecord
+    from reclaim.models import AtRiskRecord
 
     forbidden = {"card_network", "issuer_bank", "error_code", "payment_id", "method"}
     leaked = forbidden & set(AtRiskRecord.model_fields)
@@ -562,7 +563,7 @@ def _batch_is_reproducible() -> Check:
     """
     import hashlib
 
-    from .synthetic import generate
+    from reclaim.synthetic import generate
 
     name = "batch is reproducible from seed"
 
@@ -595,7 +596,7 @@ def _webhook_signature_covers_raw_bytes() -> Check:
     verifier reads the bytes off the wire."""
     import json
 
-    from .webhooks.signature import sign, verify
+    from reclaim.measure.webhooks.signature import sign, verify
 
     name = "webhook signature verifies raw bytes"
     secret = "verify_probe_secret"
@@ -614,7 +615,7 @@ def _webhook_signature_covers_raw_bytes() -> Check:
 
 
 def _webhook_handlers_cover_the_five_events() -> Check:
-    from .webhooks.events import HANDLED_EVENTS
+    from reclaim.measure.webhooks.events import HANDLED_EVENTS
 
     name = "webhook handles the five outcome events"
     required = {"payment.captured", "payment_link.paid", "order.paid",
@@ -629,8 +630,8 @@ def _scoreboard_balances() -> Check:
     """recovered + organic + open + unrecoverable == at risk. A scoreboard that
     does not add up is one where a rupee got counted twice, and nothing crashes
     when it happens."""
-    from .money import format_inr
-    from .scoreboard import compute
+    from reclaim.money import format_inr
+    from reclaim.measure.scoreboard import compute
 
     name = "scoreboard balances"
     board = compute()
@@ -651,10 +652,10 @@ def _scoreboard_balances() -> Check:
 def _every_recovered_rupee_is_attributed() -> Check:
     """The scoreboard may not invent money the attribution chain did not trace
     back to an intervention."""
-    from .db import InterventionRow, SessionLocal
-    from .money import format_inr
-    from .scoreboard import compute
-    from .webhooks.attribution import RESULT_RECOVERED
+    from reclaim.db import InterventionRow, SessionLocal
+    from reclaim.money import format_inr
+    from reclaim.measure.scoreboard import compute
+    from reclaim.measure.webhooks.attribution import RESULT_RECOVERED
 
     name = "every recovered rupee traces to an intervention"
     board = compute()
@@ -676,7 +677,7 @@ def _every_recovered_rupee_is_attributed() -> Check:
 def _no_idempotency_key_executed_twice() -> Check:
     from sqlalchemy import func
 
-    from .db import ExecutedActionRow, SessionLocal
+    from reclaim.db import ExecutedActionRow, SessionLocal
 
     name = "no action executed twice"
     with SessionLocal() as session:
@@ -694,7 +695,7 @@ def _no_idempotency_key_executed_twice() -> Check:
 def _api_exposes_the_routes_the_ui_needs() -> Check:
     name = "API exposes every documented route"
     try:
-        from .api.app import app
+        from reclaim.api.app import app
     except Exception as exc:  # noqa: BLE001
         return Check(name, FAIL, f"api will not import: {exc!r}")
 
@@ -711,9 +712,9 @@ def _api_exposes_the_routes_the_ui_needs() -> Check:
 def _baseline_gap_is_fully_accounted_for() -> Check:
     """Publishing a comparison we can lose is only defensible if every rupee of
     the difference has a stated reason."""
-    from .baseline import gap_analysis
-    from .money import format_inr
-    from .scoreboard import compute
+    from reclaim.measure.baseline import gap_analysis
+    from reclaim.money import format_inr
+    from reclaim.measure.scoreboard import compute
 
     name = "baseline gap is fully accounted for"
     if compute().records == 0:
@@ -747,9 +748,9 @@ def _demo_script_records_still_match() -> Check:
     """Every record DEMO.md stops on still has the property it is cited for."""
     import json
 
-    from .db import SessionLocal
-    from .db import AtRiskRecordRow, CustomerRow
-    from .brain.guardrails.rules.value_ceiling import ceiling_for
+    from reclaim.db import SessionLocal
+    from reclaim.db import AtRiskRecordRow, CustomerRow
+    from reclaim.guardrails.rules.value_ceiling import ceiling_for
 
     name = "demo script records still match the batch"
     script = ROOT / "DEMO.md"
@@ -810,8 +811,8 @@ def _readme_headline_matches_the_scoreboard() -> Check:
     """
     import re
 
-    from .money import format_inr
-    from .scoreboard import compute
+    from reclaim.money import format_inr
+    from reclaim.measure.scoreboard import compute
 
     name = "README headline matches the scoreboard"
     readme = ROOT / "README.md"

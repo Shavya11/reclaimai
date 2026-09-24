@@ -56,7 +56,7 @@ def next_user_id(session) -> str:
     (A test deleted a committed record and got the same id back, which is how
     this stopped being a docstring that described the wrong function.)
     """
-    from .db import AtRiskRecordRow, AuditLogRow
+    from reclaim.db import AtRiskRecordRow, AuditLogRow
 
     highest = _FIRST_USER_ID - 1
     columns = ((AtRiskRecordRow.id, AtRiskRecordRow.id),

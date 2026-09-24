@@ -13,7 +13,7 @@ from reclaim import clock
 from reclaim.cli import main
 from reclaim.db import SessionLocal, WebhookEventRow, reset_database
 from reclaim.runner import run_batch
-from reclaim.trace import trace
+from reclaim.measure.trace import trace
 
 
 @pytest.fixture(scope="module")

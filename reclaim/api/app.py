@@ -22,10 +22,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import desc
 
-from .. import audit, clock, killswitch
-from .auth import is_locked, require_admin
-from ..config import ROOT, settings
-from ..db import (
+from reclaim import audit, clock
+
+from reclaim.guardrails import killswitch
+from reclaim.api.auth import is_locked, require_admin
+from reclaim.config import ROOT, settings
+from reclaim.db import (
     AtRiskRecordRow,
     AuditLogRow,
     CustomerRow,
@@ -36,9 +38,9 @@ from ..db import (
     WebhookEventRow,
     init_db,
 )
-from ..money import format_inr
-from ..webhooks import receive
-from ..webhooks.signature import EVENT_ID_HEADER, SIGNATURE_HEADER
+from reclaim.money import format_inr
+from reclaim.measure.webhooks import receive
+from reclaim.measure.webhooks.signature import EVENT_ID_HEADER, SIGNATURE_HEADER
 
 log = logging.getLogger(__name__)
 
@@ -127,8 +129,8 @@ def _walk_arc(*, reset: bool, seed: int | None = None) -> None:
     project says 31.7%. A reader comparing the two has no way to tell which one
     is lying, and is right not to trust either.
     """
-    from ..db import reset_database
-    from ..runner import DEMO_ARC, run_batch, tick
+    from reclaim.db import reset_database
+    from reclaim.runner import DEMO_ARC, run_batch, tick
 
     if reset:
         reset_database()
@@ -158,7 +160,7 @@ def _seed_if_empty() -> None:
     the arc live is the fallback for a checkout without one: correct, but a
     hundred seconds during which the page has nothing to show.
     """
-    from ..repository import count_records
+    from reclaim.repository import count_records
 
     try:
         if count_records():
@@ -167,7 +169,7 @@ def _seed_if_empty() -> None:
         log.warning("could not count records at boot: %s", exc)
         return
 
-    from .. import snapshot
+    from reclaim import snapshot
 
     if snapshot.restore() is not None:
         return
@@ -258,7 +260,7 @@ def _snapshot_header() -> dict[str, Any] | None:
     """What the committed snapshot claims, so a deployment serving the wrong
     numbers can be caught by reading /api/health instead of by squinting at the
     dashboard."""
-    from .. import snapshot
+    from reclaim import snapshot
 
     payload = snapshot.read()
     if payload is None:
@@ -269,14 +271,14 @@ def _snapshot_header() -> dict[str, Any] | None:
 
 @app.get("/api/scoreboard")
 def scoreboard() -> dict[str, Any]:
-    from ..scoreboard import compute
+    from reclaim.measure.scoreboard import compute
 
     return compute().as_dict()
 
 
 @app.get("/api/baseline")
 def baseline(seed: int = Query(default=None)) -> dict[str, Any]:
-    from ..baseline import compare
+    from reclaim.measure.baseline import compare
 
     return compare(seed=seed if seed is not None else settings.seed).as_dict()
 
@@ -317,7 +319,7 @@ def records(
     blocked: bool = False,
     limit: int = Query(default=500, le=2000),
 ) -> dict[str, Any]:
-    from ..scoreboard import diagnosed_causes
+    from reclaim.measure.scoreboard import diagnosed_causes
 
     causes = diagnosed_causes()
     blocks = _latest_blocks()
@@ -351,8 +353,8 @@ def _latest_blocks() -> dict[str, list[dict[str, Any]]]:
     """The most recent guardrail refusal per (record, guardrail). The queue
     screen shows why a record is sitting still, and "blocked" without a reason
     is the same as no information at all."""
-    from ..db import AuditLogRow
-    from ..enums import Stage
+    from reclaim.db import AuditLogRow
+    from reclaim.enums import Stage
 
     out: dict[str, list[dict[str, Any]]] = {}
     with SessionLocal() as session:
@@ -378,7 +380,7 @@ def _latest_blocks() -> dict[str, list[dict[str, Any]]]:
 
 @app.get("/api/records/{record_id}")
 def record_detail(record_id: str) -> dict[str, Any]:
-    from ..scoreboard import diagnosed_causes
+    from reclaim.measure.scoreboard import diagnosed_causes
 
     with SessionLocal() as session:
         row = session.get(AtRiskRecordRow, record_id)
@@ -446,8 +448,7 @@ def human_queue() -> dict[str, Any]:
     still recoverable, and resolved rows were never filtered out at all — so the
     screen showed work that no longer existed, sorted by the wrong thing.
     """
-    from .. import human_queue as queue
-
+    from reclaim.decide import human_queue as queue
     items = queue.open_items()
     work = [i for i in items if i["tier"] < int(queue.Tier.FOR_THE_RECORD)]
     return {"count": len(items),
@@ -463,9 +464,9 @@ def human_queue() -> dict[str, Any]:
 @app.get("/api/guardrails")
 def guardrails() -> dict[str, Any]:
     """Every refusal, grouped. This is the screen the demo turns on."""
-    from ..brain.guardrails import GUARDRAIL_NAMES
-    from ..db import AuditLogRow
-    from ..enums import Stage
+    from reclaim.guardrails import GUARDRAIL_NAMES
+    from reclaim.db import AuditLogRow
+    from reclaim.enums import Stage
 
     with SessionLocal() as session:
         rows = (session.query(AuditLogRow)
@@ -516,9 +517,9 @@ def webhook_log(limit: int = Query(default=200, le=1000)) -> dict[str, Any]:
 def diagnosis_accuracy(seed: int = Query(default=None)) -> dict[str, Any]:
     """Accuracy against ground truth. The generator knows what it planted, so
     this is measured rather than asserted."""
-    from ..brain.diagnosis.accuracy import cohort_counterfactual, score
-    from ..brain.diagnosis.engine import diagnose_batch
-    from ..synthetic import generate
+    from reclaim.diagnose.accuracy import cohort_counterfactual, score
+    from reclaim.diagnose.engine import diagnose_batch
+    from reclaim.synthetic import generate
 
     batch = generate(seed=seed if seed is not None else settings.seed)
     diagnoses, signals = diagnose_batch(batch.records, batch.traffic, llm=None)
@@ -569,8 +570,8 @@ def api_tick(advance: str = Query(default="24h")) -> dict[str, Any]:
     resolved here, before anything is spawned, so a bad one is still a 400 and
     never a silently accepted no-op.
     """
-    from ..brain.policy.schedule import ScheduleError, resolve
-    from ..runner import tick
+    from reclaim.decide.schedule import ScheduleError, resolve
+    from reclaim.runner import tick
 
     try:
         resolve(advance, clock.now())
@@ -606,13 +607,13 @@ def clock_reset() -> dict[str, Any]:
 def _llm():
     """None when there is no key. The batch completes either way — that is the
     fallback chain doing its job, not a degraded mode to apologise for."""
-    from ..brain.diagnosis.llm_diagnoser import LLMDiagnoser
+    from reclaim.diagnose.llm_diagnoser import LLMDiagnoser
 
     llm = LLMDiagnoser()
     if llm.available:
         return llm
 
-    from ..brain.diagnosis.gemini_diagnoser import GeminiDiagnoser
+    from reclaim.diagnose.gemini_diagnoser import GeminiDiagnoser
 
     gem = GeminiDiagnoser()
     return gem if gem.available else None
@@ -622,7 +623,7 @@ def _extractor():
     """The reply reader. None when there is no key, in which case every reply
     lands below the confidence floor and reaches a human — degraded, and
     correct."""
-    from ..brain.conversation import build_extractor
+    from reclaim.diagnose.conversation import build_extractor
 
     return build_extractor()
 
@@ -636,16 +637,14 @@ def _extractor():
 
 @app.get("/api/admin/rules")
 def admin_rules() -> dict[str, Any]:
-    from .. import admin
-
+    from reclaim.rules import admin
     return admin.snapshot()
 
 
 @app.post("/api/admin/policy/{leak_type}/{root_cause}", dependencies=[Depends(require_admin)])
 def admin_set_policy(leak_type: str, root_cause: str,
                      body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    from .. import admin
-
+    from reclaim.rules import admin
     row = dict(body.get("row") or body)
     note = str(body.pop("note", "")) if isinstance(body, dict) else ""
     row.pop("note", None)
@@ -660,8 +659,7 @@ def admin_set_policy(leak_type: str, root_cause: str,
 @app.post("/api/admin/guardrail/{name}", dependencies=[Depends(require_admin)])
 def admin_set_guardrail(name: str,
                         body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    from .. import admin
-
+    from reclaim.rules import admin
     config = dict(body.get("config") or body)
     note = str(config.pop("note", ""))
     try:
@@ -674,15 +672,13 @@ def admin_set_guardrail(name: str,
 
 @app.post("/api/admin/reset", dependencies=[Depends(require_admin)])
 def admin_reset() -> dict[str, Any]:
-    from .. import admin
-
+    from reclaim.rules import admin
     return {"restored": admin.reset()}
 
 
 @app.get("/api/admin/changes")
 def admin_changes(limit: int = Query(default=200, le=1000)) -> dict[str, Any]:
-    from .. import admin
-
+    from reclaim.rules import admin
     items = admin.changes(limit)
     return {"count": len(items), "changes": items}
 
@@ -696,8 +692,8 @@ def admin_replay(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     because the frozen diagnoses spend no LLM quota. Backgrounding it would mean
     a second job to poll for a result that is only useful immediately.
     """
-    from .. import whatif
-    from ..brain.validation import RuleInvalid
+    from reclaim.measure import whatif
+    from reclaim.rules.validation import RuleInvalid
 
     try:
         overrides = whatif.parse_overrides(body)
@@ -729,7 +725,7 @@ def admin_replay(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
 
 @app.post("/api/sandbox/preview")
 def sandbox_preview(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
-    from .. import sandbox
+    from reclaim import sandbox
 
     try:
         sub = sandbox.Submission(**body)
@@ -743,7 +739,7 @@ def sandbox_commit(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     """Synchronous, unlike `/api/run-batch`. One record through one tick is a
     second or two, and backgrounding it would mean polling for a result whose
     only value is being seen immediately."""
-    from .. import sandbox
+    from reclaim import sandbox
 
     try:
         sub = sandbox.Submission(**body)
@@ -763,7 +759,7 @@ def sandbox_commit(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
 def sandbox_reset() -> dict[str, Any]:
     """Back to the committed snapshot. A demo that lets strangers add records
     needs the way back to be one button, not a CLI command."""
-    from .. import snapshot
+    from reclaim import snapshot
 
     if not _begin("restoring the snapshot"):
         raise HTTPException(status_code=409,
@@ -784,7 +780,7 @@ def sandbox_reply(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     """One customer reply, read the way the batch reads one. Writes nothing —
     the promise book is untouched, and the interesting output is what does not
     happen: an accepted promise buys silence."""
-    from .. import sandbox
+    from reclaim import sandbox
 
     text = str(body.get("text") or "")
     without_model = bool(body.get("without_model"))
@@ -796,7 +792,7 @@ def sandbox_guardrails(body: dict[str, Any] = Body(default={})) -> dict[str, Any
     """All fourteen rules against one hypothetical action. The passes are shown
     with the refusals, because "eleven passed, three refused" is a measurement
     and a list of refusals alone is an opinion."""
-    from .. import sandbox
+    from reclaim import sandbox
 
     try:
         hypothetical = sandbox.Hypothetical(**body)
@@ -807,7 +803,7 @@ def sandbox_guardrails(body: dict[str, Any] = Body(default={})) -> dict[str, Any
 
 @app.get("/api/sandbox/checkout")
 def sandbox_checkout_config() -> dict[str, Any]:
-    from .. import sandbox
+    from reclaim import sandbox
 
     return sandbox.checkout_config()
 
@@ -815,8 +811,8 @@ def sandbox_checkout_config() -> dict[str, Any]:
 @app.post("/api/sandbox/checkout/order", status_code=201)
 def sandbox_checkout_order(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     """A real test-mode order for Razorpay Checkout to open against."""
-    from .. import sandbox
-    from ..executor.razorpay_client import RazorpayError
+    from reclaim import sandbox
+    from reclaim.execute.razorpay_client import RazorpayError
 
     try:
         amount = int(body.get("amount_paise") or 0)
@@ -838,8 +834,8 @@ def sandbox_checkout_order(body: dict[str, Any] = Body(default={})) -> dict[str,
 def sandbox_checkout_failed(body: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     """A payment that failed in real Checkout, fetched back from Razorpay and
     committed as a record — the same path as a typed submission from there on."""
-    from .. import sandbox
-    from ..executor.razorpay_client import RazorpayError
+    from reclaim import sandbox
+    from reclaim.execute.razorpay_client import RazorpayError
 
     try:
         failure = sandbox.CheckoutFailure(**body)
@@ -865,14 +861,13 @@ def evidence_index() -> dict[str, Any]:
     been committed. A claim with no artifact is reported as missing rather than
     hidden — a reader who cannot tell the ablation has not been run is worse off
     than one who can."""
-    from .. import evidence
-
+    from reclaim.measure import evidence
     return {"claims": evidence.available()}
 
 
 @app.get("/api/sandbox/presets")
 def sandbox_presets() -> dict[str, Any]:
-    from .. import sandbox
+    from reclaim import sandbox
 
     return {"presets": sandbox.PRESETS,
             "replies": sandbox.REPLY_PRESETS,
@@ -883,7 +878,7 @@ def sandbox_presets() -> dict[str, Any]:
 def promises_list() -> dict[str, Any]:
     """The promise book. Open promises are the agent deliberately silent, which
     is the one thing a dashboard cannot show as activity and most needs to."""
-    from ..promises import counts
+    from reclaim.measure.promises import counts
 
     with SessionLocal() as session:
         rows = (session.query(PromiseRow)
@@ -906,7 +901,7 @@ def promises_list() -> dict[str, Any]:
 def replies_log(limit: int = Query(default=200, le=1000)) -> dict[str, Any]:
     """Every reply the agent read, with the label it produced and what that
     label did. The conversation layer's audit trail."""
-    from ..enums import Stage
+    from reclaim.enums import Stage
 
     with SessionLocal() as session:
         rows = (session.query(AuditLogRow)

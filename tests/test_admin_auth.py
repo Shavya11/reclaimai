@@ -12,7 +12,7 @@ by faking the client host.
 
 import pytest
 
-from reclaim import killswitch
+from reclaim.guardrails import killswitch
 from reclaim.api import auth
 from reclaim.config import settings
 from reclaim.db import reset_database
@@ -132,7 +132,7 @@ def test_the_kill_switch_is_persisted_not_in_memory(client):
 def test_the_gate_reads_the_persisted_kill_switch():
     """Flipped through the API, honoured by the guardrail on the next tick -
     without anybody passing the value through by hand."""
-    from reclaim.brain.gate import run as gate_run
+    from reclaim.guardrails.gate import run as gate_run
     from reclaim.enums import ActionType, Channel, LeakType, RecordState, RootCause
     from reclaim.models import AtRiskRecord, Diagnosis, ProposedAction
     from reclaim.timeutil import now

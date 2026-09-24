@@ -1,0 +1,364 @@
+"""Outcome attribution — the chain that proves the recovery was ours.
+
+    payment_link.paid
+        -> the link id we minted
+        -> the intervention that minted it
+        -> the record that intervention was chasing
+        -> ₹ attributed to that record, and only that record
+
+Without this walk you are polling Razorpay, seeing money arrive, and assuming
+you caused it. The merchant's customers pay for all sorts of reasons; a number
+that counts every payment as a recovery is a number a judge is right to
+disbelieve. Attribution is what makes "₹2.03L recovered" a claim rather than a
+coincidence.
+
+Three properties hold here:
+
+  * **Idempotent.** Razorpay retries webhooks. UNIQUE(event_id) claims the
+    delivery; a second copy is recognised and dropped.
+  * **Single-attribution.** Two different events can describe one payment
+    (`payment.captured` and `payment_link.paid` arrive together). An
+    intervention that already carries a result is never credited twice.
+  * **Loud when it fails.** An event that matches no intervention is logged as
+    UNATTRIBUTED, not silently discarded. Money we cannot explain is not money
+    we get to count.
+"""
+
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+from sqlalchemy import desc
+from sqlalchemy.exc import IntegrityError
+
+from reclaim import audit
+
+from reclaim.decide import human_queue
+from reclaim.db import (
+    AtRiskRecordRow,
+    InterventionRow,
+    SessionLocal,
+    WebhookEventRow,
+    init_db,
+)
+from reclaim.enums import RecordState, Stage
+from reclaim.clock import now
+from reclaim.measure.webhooks.events import MalformedEvent, WebhookEvent, parse
+
+log = logging.getLogger(__name__)
+
+# Outcomes of handling one delivery. All of them are 200 responses to Razorpay —
+# a 500 just means it retries a webhook we already understood.
+PROCESSED = "PROCESSED"
+DUPLICATE = "DUPLICATE"
+ALREADY_ATTRIBUTED = "ALREADY_ATTRIBUTED"
+UNATTRIBUTED = "UNATTRIBUTED"
+IGNORED = "IGNORED"
+MALFORMED = "MALFORMED"
+
+RESULT_RECOVERED = "RECOVERED"
+# The customer paid and nothing we did caused it. A separate outcome from
+# UNATTRIBUTED, which means we could not even tell whose money it was: here we
+# know exactly whose it is and know it is not ours to claim.
+ORGANIC = "ORGANIC"
+RESULT_FAILED_AGAIN = "FAILED_AGAIN"
+RESULT_NO_RESPONSE = "NO_RESPONSE"
+
+# Audit rows for events that belong to no record still need a record_id. A
+# sentinel keeps them queryable instead of dropping them on the floor.
+ORPHAN = "UNATTRIBUTED"
+
+_TERMINAL = {RecordState.RECOVERED.value, RecordState.CLOSED.value,
+             RecordState.UNRECOVERABLE.value}
+
+
+@dataclass
+class Attribution:
+    outcome: str
+    event_id: str
+    event_type: str = ""
+    record_id: str | None = None
+    intervention_id: int | None = None
+    amount: int = 0
+    reason: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "outcome": self.outcome,
+            "event_id": self.event_id,
+            "event_type": self.event_type,
+            "record_id": self.record_id,
+            "intervention_id": self.intervention_id,
+            "amount_paise": self.amount,
+            "reason": self.reason,
+        }
+
+
+def _claim(event: WebhookEvent, *, simulated: bool) -> bool:
+    """Reserve this delivery. False means it has been seen before."""
+    row = WebhookEventRow(
+        event_id=event.event_id,
+        event_type=event.event_type,
+        razorpay_ref=event.refs[0] if event.refs else None,
+        amount=event.amount,
+        outcome="RECEIVED",
+        simulated=simulated,
+        payload=event.raw,
+        received_at=now(),
+    )
+    try:
+        with SessionLocal() as session:
+            session.add(row)
+            session.commit()
+        return True
+    except IntegrityError:
+        return False
+
+
+def _settle_event_row(event_id: str, outcome: str, record_id: str | None) -> None:
+    with SessionLocal() as session:
+        row = (session.query(WebhookEventRow)
+               .filter_by(event_id=event_id).one_or_none())
+        if row is not None:
+            row.outcome = outcome
+            row.record_id = record_id
+            session.commit()
+
+
+def _find_intervention(session, event: WebhookEvent) -> InterventionRow | None:
+    """Most specific match first: the exact Razorpay id we minted, then the
+    record id we stamped into the payment's notes."""
+    for ref in event.refs:
+        row = (session.query(InterventionRow)
+               .filter(InterventionRow.razorpay_ref == ref)
+               .order_by(desc(InterventionRow.id))
+               .first())
+        if row is not None:
+            return row
+
+    if event.record_id:
+        return (session.query(InterventionRow)
+                .filter(InterventionRow.record_id == event.record_id)
+                .filter(InterventionRow.outcome == "EXECUTED")
+                .order_by(desc(InterventionRow.id))
+                .first())
+    return None
+
+
+def _record_for_unprompted(session, event: WebhookEvent) -> AtRiskRecordRow | None:
+    """The record a payment belongs to when nothing of ours minted it.
+
+    Matched on `source_ref` — the order the MERCHANT already had — and never on
+    `notes.record_id`, because our executor writes that note on everything it
+    creates. A note is therefore proof the payment came through us, and reading
+    one here would let an unprompted payment claim to be a recovery.
+
+    So the only way in is a reference we never controlled, which is exactly what
+    a customer paying the original invoice produces.
+    """
+    if not event.succeeded:
+        return None
+    for ref in event.refs:
+        found = (session.query(AtRiskRecordRow)
+                 .filter(AtRiskRecordRow.source_ref == ref).first())
+        if found is not None:
+            return found
+    return None
+
+
+def handle(
+    body: dict[str, Any],
+    *,
+    event_id: str | None = None,
+    simulated: bool = False,
+) -> Attribution:
+    """Handle one verified webhook delivery. The caller has already checked the
+    signature; this function assumes the body is authentic and nothing else."""
+    init_db()
+
+    try:
+        event = parse(body, event_id=event_id)
+    except MalformedEvent as exc:
+        log.warning("malformed webhook: %s", exc)
+        return Attribution(outcome=MALFORMED, event_id=event_id or "", reason=str(exc))
+
+    if not _claim(event, simulated=simulated):
+        return Attribution(outcome=DUPLICATE, event_id=event.event_id,
+                           event_type=event.event_type,
+                           reason="Delivery already handled; webhooks retry.")
+
+    if not event.handled:
+        _settle_event_row(event.event_id, IGNORED, None)
+        return Attribution(outcome=IGNORED, event_id=event.event_id,
+                           event_type=event.event_type,
+                           reason=f"No handler for {event.event_type}.")
+
+    with SessionLocal() as session:
+        intervention = _find_intervention(session, event)
+
+        if intervention is None:
+            # A payment we can identify but did not cause. The customer would
+            # have paid anyway, and the honest treatment is to record that the
+            # money arrived while crediting the agent with nothing — the
+            # difference between "we recovered this" and "this was going to
+            # arrive". Counting it as a recovery is how a scoreboard starts
+            # claiming other people's work.
+            organic = _record_for_unprompted(session, event)
+            if organic is not None and organic.state not in _TERMINAL:
+                organic.state = RecordState.RECOVERED.value
+                organic.next_action_at = None
+                closed = human_queue.resolve(organic.id, session=session)
+                session.commit()
+
+                reason = (f"{event.event_type} for {organic.id} matched no "
+                          f"intervention of ours. The customer paid unprompted; "
+                          f"the money arrived and none of it is attributable to "
+                          f"the agent."
+                          + (f" Closed {closed} open human-queue row"
+                             f"{'s' if closed != 1 else ''}." if closed else ""))
+                audit.log(organic.id, Stage.OUTCOME, ORGANIC, reason,
+                          payload={"event_id": event.event_id,
+                                   "event_type": event.event_type,
+                                   "amount_paise": event.amount,
+                                   "attributed_paise": 0,
+                                   "simulated": simulated})
+                _settle_event_row(event.event_id, ORGANIC, organic.id)
+                return Attribution(outcome=ORGANIC, event_id=event.event_id,
+                                   event_type=event.event_type,
+                                   record_id=organic.id, amount=0,
+                                   reason=reason)
+
+            reason = (f"{event.event_type} matched no intervention "
+                      f"(refs={list(event.refs) or 'none'}).")
+            audit.log(ORPHAN, Stage.OUTCOME, UNATTRIBUTED, reason,
+                      payload={"event_id": event.event_id,
+                               "event_type": event.event_type,
+                               "amount_paise": event.amount,
+                               "simulated": simulated})
+            _settle_event_row(event.event_id, UNATTRIBUTED, None)
+            return Attribution(outcome=UNATTRIBUTED, event_id=event.event_id,
+                               event_type=event.event_type, amount=event.amount,
+                               reason=reason)
+
+        record = session.get(AtRiskRecordRow, intervention.record_id)
+
+        # Only money already counted is untouchable. NO_RESPONSE and
+        # FAILED_AGAIN both mean "no payment yet", not "no payment ever" — a
+        # customer can open a link days after it was sent, and a failed attempt
+        # can be retried on the same link and succeed. Treating either as final
+        # silently discards real money and leaves the agent chasing a record
+        # that has already paid.
+        if intervention.result == RESULT_RECOVERED:
+            reason = (f"Intervention {intervention.id} already recovered "
+                      f"{intervention.recovered_amount} paise; not counted twice.")
+            audit.log(intervention.record_id, Stage.OUTCOME, ALREADY_ATTRIBUTED,
+                      reason, payload={"event_id": event.event_id,
+                                       "event_type": event.event_type,
+                                       "simulated": simulated})
+            _settle_event_row(event.event_id, ALREADY_ATTRIBUTED,
+                              intervention.record_id)
+            return Attribution(outcome=ALREADY_ATTRIBUTED, event_id=event.event_id,
+                               event_type=event.event_type,
+                               record_id=intervention.record_id,
+                               intervention_id=intervention.id, reason=reason)
+
+        if event.succeeded:
+            # Never credit more than the record was worth. An overpayment is a
+            # merchant's problem, not a bigger recovery number.
+            amount = min(event.amount, record.amount) if (
+                event.amount and record) else (record.amount if record else event.amount)
+
+            was = intervention.result
+            intervention.result = RESULT_RECOVERED
+            intervention.recovered_amount = amount
+            intervention.settled_at = now()
+            closed_rows = 0
+            if record is not None:
+                record.state = RecordState.RECOVERED.value
+                record.next_action_at = None
+                # The money arrived, so nobody needs to be sent to collect it.
+                # Guardrail 11 already stops the AGENT chasing a paid record;
+                # this is the same rule applied to a person's afternoon.
+                closed_rows = human_queue.resolve(record.id, session=session)
+            session.commit()
+
+            late = (f" Paid after this attempt was recorded as {was}."
+                    if was else "")
+            unqueued = (f" Closed {closed_rows} open human-queue row"
+                        f"{'s' if closed_rows != 1 else ''}." if closed_rows else "")
+            reason = (
+                f"{event.event_type} on {event.refs[0] if event.refs else '?'} "
+                f"traced to intervention {intervention.id} "
+                f"({intervention.action_type}, attempt "
+                f"{intervention.attempt_number}, policy "
+                f"{intervention.policy_ref}). Record marked RECOVERED.{late}"
+                f"{unqueued}"
+            )
+            audit.log(intervention.record_id, Stage.OUTCOME, RESULT_RECOVERED,
+                      reason,
+                      payload={"event_id": event.event_id,
+                               "event_type": event.event_type,
+                               "razorpay_ref": intervention.razorpay_ref,
+                               "intervention_id": intervention.id,
+                               "recovered_paise": amount,
+                               "attempt_number": intervention.attempt_number,
+                               "policy_ref": intervention.policy_ref,
+                               "upgraded_from": was,
+                               "simulated": simulated})
+            _settle_event_row(event.event_id, PROCESSED, intervention.record_id)
+            return Attribution(outcome=PROCESSED, event_id=event.event_id,
+                               event_type=event.event_type,
+                               record_id=intervention.record_id,
+                               intervention_id=intervention.id, amount=amount,
+                               reason=reason)
+
+        # payment.failed — the attempt is spent, the record is not recovered.
+        # Bumping attempts here is what makes the max-attempts guardrail count
+        # reality rather than intentions, which is also why it must only happen
+        # the first time this attempt resolves: a second failure event on an
+        # attempt already marked NO_RESPONSE would spend the budget twice.
+        first_resolution = intervention.result is None
+        intervention.result = RESULT_FAILED_AGAIN
+        intervention.settled_at = now()
+        if record is not None and first_resolution:
+            record.attempts = (record.attempts or 0) + 1
+        session.commit()
+
+        reason = (f"{event.event_type} on {event.refs[0] if event.refs else '?'}: "
+                  f"attempt {intervention.attempt_number} did not recover. "
+                  f"{(event.error or {}).get('description') or ''}".strip())
+        audit.log(intervention.record_id, Stage.OUTCOME, RESULT_FAILED_AGAIN,
+                  reason,
+                  payload={"event_id": event.event_id,
+                           "event_type": event.event_type,
+                           "error": event.error,
+                           "intervention_id": intervention.id,
+                           "simulated": simulated})
+        _settle_event_row(event.event_id, PROCESSED, intervention.record_id)
+        return Attribution(outcome=PROCESSED, event_id=event.event_id,
+                           event_type=event.event_type,
+                           record_id=intervention.record_id,
+                           intervention_id=intervention.id, reason=reason)
+
+
+def mark_no_response(intervention_id: int, *, reason: str = "") -> None:
+    """The customer did nothing. Recorded explicitly so an unrecovered record is
+    distinguishable from one still waiting on an answer."""
+    with SessionLocal() as session:
+        row = session.get(InterventionRow, intervention_id)
+        if row is None or row.result is not None:
+            return
+        row.result = RESULT_NO_RESPONSE
+        row.settled_at = now()
+        # The attempt is spent whether or not anyone answered. Without this the
+        # record proposes attempt 1 forever, its idempotency key is already
+        # claimed, and it is blocked as a replay for the rest of its life
+        # instead of moving to step 2 of the policy schedule.
+        record = session.get(AtRiskRecordRow, row.record_id)
+        if record is not None:
+            record.attempts = (record.attempts or 0) + 1
+        session.commit()
+        record_id = row.record_id
+    audit.log(record_id, Stage.OUTCOME, RESULT_NO_RESPONSE,
+              reason or "Intervention delivered; no payment followed.",
+              payload={"intervention_id": intervention_id})

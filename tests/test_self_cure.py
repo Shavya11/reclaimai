@@ -21,7 +21,7 @@ from reclaim.db import (
 from reclaim.enums import RecordState, RootCause
 from reclaim.synthetic import generate, razorpay_payloads as payloads
 from reclaim.synthetic.outcomes import SELF_CURE
-from reclaim.webhooks.attribution import ORGANIC, PROCESSED, handle
+from reclaim.measure.webhooks.attribution import ORGANIC, PROCESSED, handle
 
 
 @pytest.fixture(autouse=True)
@@ -175,7 +175,7 @@ def test_an_unprompted_payment_takes_the_record_off_the_human_queue():
 def test_organic_money_is_its_own_bucket_and_the_board_still_balances():
     """Neither recovery nor write-off. The money arrived, so it is not lost; the
     agent did not cause it, so it is not ours."""
-    from reclaim.scoreboard import compute
+    from reclaim.measure.scoreboard import compute
 
     rid = _record()
     handle(payloads.payment_captured_unprompted(
@@ -196,7 +196,7 @@ def test_settlement_leaves_a_real_razorpay_link_to_razorpay():
     fake `paid` for it - that would fabricate a payment for an id a customer
     could actually pay, and the scoreboard could never again tell real from
     modelled. Real ids carry no `_stub_`; those are left pending."""
-    from reclaim.settlement import settle
+    from reclaim.measure.settlement import settle
 
     real = _record("REC_REAL")
     stub = _record("REC_STUB")

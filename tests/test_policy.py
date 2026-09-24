@@ -9,10 +9,10 @@ from datetime import datetime
 
 import pytest
 
-from reclaim.brain import rules
-from reclaim.brain.policy import decide
-from reclaim.brain.policy.engine import STRATEGY_TO_ACTION, prefill_method
-from reclaim.brain.policy.schedule import ScheduleError, resolve
+from reclaim import rules
+from reclaim.decide import decide
+from reclaim.decide.engine import STRATEGY_TO_ACTION, prefill_method
+from reclaim.decide.schedule import ScheduleError, resolve
 from reclaim.enums import (
     ActionType, CAUSES_FOR_LEAK, Channel, LeakType, RecordState, RootCause,
 )

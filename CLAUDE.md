@@ -39,19 +39,25 @@ the amount, the timing, or the recipient.
 
 ## Layout
 
+`reclaim/` is laid out as the pipeline runs — `runner.py` walks these six in order.
+
 ```
-detectors/     one plugin per leak type, each exposing detect() -> list[AtRiskRecord]
-brain/
-  rules.py     THE single rule loader — V2 swaps its source for a DB
-  diagnosis/   deterministic.py (layer 1), llm_diagnoser.py (layer 2), cohort.py
-  policy/      policies.yaml + engine.py
-  guardrails/  base.py + rules/ (one file per guardrail) + registry.py
-executor/      Razorpay writes, channel abstraction
-webhooks/      signature verification + outcome attribution
-audit/         append-only decision log
-api/           FastAPI routes
+reclaim/
+  detect/      1. one plugin per leak type, each exposing detect() -> list[AtRiskRecord]
+  diagnose/    2. deterministic.py (layer 1), llm_diagnoser.py (layer 2), cohort.py,
+                  receivables.py; conversation/ reads customer replies
+  decide/      3. policies.yaml + engine.py (label -> action), human_queue.py
+  guardrails/  4. base.py + rules/ (one file per guardrail) + registry.py, gate.py
+  execute/     5. Razorpay writes, channel abstraction, idempotency
+  measure/     6. webhooks/ (signature + attribution), scoreboard, settlement,
+                  baseline, whatif, promises, trace, evidence, ablation
+  rules/       THE single rule loader (__init__.py) + validation + admin writes
+  audit/       append-only decision log
+  api/         FastAPI routes
+  runner.py    the batch orchestrator; models, enums, db, config, clock at top level
 ui/            Next.js
 tests/
+extras/        demo video scripts, screenshots, handoff notes — not part of the app
 ```
 
 ---
@@ -66,7 +72,7 @@ tests/
 3. **`audit_log` is append-only.** Never UPDATE or DELETE a row. Log blocked actions
    as loudly as executed ones — the blocks are the demo.
 4. **Rules are data, not code.** Policy lives in `policies.yaml`; guardrail thresholds
-   live in config. Both load through `brain/rules.py`. Do not scatter magic numbers.
+   live in config. Both load through `rules/__init__.py`. Do not scatter magic numbers.
 5. **`AtRiskRecord` stays generic.** No payment-specific fields on it — V2 adds
    overdue invoices as just another `leak_type`.
 6. **Guardrails sit above the channel abstraction**, never inside it, so a new channel

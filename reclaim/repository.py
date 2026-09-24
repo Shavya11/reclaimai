@@ -3,10 +3,10 @@ definitions stay readable."""
 
 from sqlalchemy import select
 
-from .db import AtRiskRecordRow, CustomerRow, SessionLocal
-from .enums import LeakType, RecordState
-from .models import AtRiskRecord
-from .timeutil import to_ist
+from reclaim.db import AtRiskRecordRow, CustomerRow, SessionLocal
+from reclaim.enums import LeakType, RecordState
+from reclaim.models import AtRiskRecord
+from reclaim.timeutil import to_ist
 
 
 def _to_model(row: AtRiskRecordRow) -> AtRiskRecord:
@@ -87,7 +87,7 @@ def last_attempt_at() -> dict[str, object]:
     """When each record was last acted on. Attempt N+1's schedule counts from
     attempt N, so a "+48h" follow-up means 48 hours after the first message
     rather than 48 hours after whenever someone next runs the batch."""
-    from .db import InterventionRow
+    from reclaim.db import InterventionRow
 
     out: dict[str, object] = {}
     with SessionLocal() as s:
@@ -122,7 +122,7 @@ def actions_today(at) -> int:
     permits two thousand. Seeded from what was executed, like the frequency
     cap is, so the unit in the config is the unit that is enforced.
     """
-    from .db import InterventionRow
+    from reclaim.db import InterventionRow
 
     day = to_ist(at).date()
     with SessionLocal() as s:
@@ -143,7 +143,7 @@ def contact_history(before, window_days: int = 7):
     """
     from datetime import timedelta
 
-    from .db import InterventionRow
+    from reclaim.db import InterventionRow
 
     since = before - timedelta(days=window_days)
     counts: dict[str, int] = {}

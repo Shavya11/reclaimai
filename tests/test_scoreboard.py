@@ -8,12 +8,14 @@ than features that have to work.
 
 import pytest
 
-from reclaim import baseline, clock
+from reclaim.measure import baseline
+
+from reclaim import clock
 from reclaim.db import InterventionRow, SessionLocal, reset_database
 from reclaim.enums import NEVER_RETRY, RecordState
 from reclaim.runner import DEMO_ARC, run_batch, tick
-from reclaim.scoreboard import compute
-from reclaim.webhooks.attribution import RESULT_RECOVERED
+from reclaim.measure.scoreboard import compute
+from reclaim.measure.webhooks.attribution import RESULT_RECOVERED
 
 
 @pytest.fixture(autouse=True)

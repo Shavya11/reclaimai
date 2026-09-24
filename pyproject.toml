@@ -39,4 +39,4 @@ reclaim = "reclaim.cli:main"
 include = ["reclaim*"]
 
 [tool.setuptools.package-data]
-reclaim = ["brain/policy/*.yaml", "brain/guardrails/*.yaml"]
+reclaim = ["decide/*.yaml", "guardrails/*.yaml"]

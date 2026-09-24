@@ -10,9 +10,11 @@ from datetime import timedelta
 
 import pytest
 
-from reclaim import clock, promises
-from reclaim.brain.guardrails import GuardrailContext, evaluate_all
-from reclaim.brain.guardrails.rules.promise_window import PromiseWindow
+from reclaim import clock
+
+from reclaim.measure import promises
+from reclaim.guardrails import GuardrailContext, evaluate_all
+from reclaim.guardrails.rules.promise_window import PromiseWindow
 from reclaim.db import (
     AtRiskRecordRow, CustomerRow, PromiseRow, SessionLocal, reset_database,
 )

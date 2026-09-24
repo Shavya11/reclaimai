@@ -377,7 +377,7 @@ intervals, and the harness refuses to print a comparison it cannot stand behind.
       is scored on the mean of what it could turn out to be and the row says
       **estimate** rather than printing a confident number we do not have.
       The score orders a list; it never chooses an action.
-- [x] **6.3 The ablation** — `reclaim/experiments/ablation.py`, `cli ablation`.
+- [x] **6.3 The ablation** — `reclaim/measure/ablation.py`, `cli ablation`.
       Two arms, two scratch databases, same seed, real runner and real
       guardrails throughout. Unlike the what-if replay, diagnoses are **not**
       frozen: there, rules never affect DIAGNOSE; here diagnosis *is* the
@@ -520,7 +520,7 @@ committed record visible on the dashboard, the queue and the audit trail, and th
 Stop here and the demo works: type, watch, commit, see it land.
 
 *State: complete. 396 tests and 28 verify checks green. See
-[docs/DAY7-HANDOFF.md](docs/DAY7-HANDOFF.md) for the traps, the bugs found on the
+[extras/DAY7-HANDOFF.md](extras/DAY7-HANDOFF.md) for the traps, the bugs found on the
 way, and the limitations worth knowing before demoing.*
 
 - [x] **7.1 A separate ID space for what a visitor makes** *(1.5h, took ~1h)*.
@@ -626,7 +626,7 @@ a config object, which is the whole reason phase 1 built a generic component.
 
 ### Phase 3 — the evidence tab (~2.5h)
 
-- [x] **7.11 Evidence artifacts** *(1h)* — `reclaim/evidence.py`, `reclaim evidence [--only ...]`. All three committed; the ablation measured +₹6,07,926, 38 fewer escalations, 0 harmful actions, 38 API calls, 0% unanswered, produced by the `--json` flags that
+- [x] **7.11 Evidence artifacts** *(1h)* — `reclaim/measure/evidence.py`, `reclaim evidence [--only ...]`. All three committed; the ablation measured +₹6,07,926, 38 fewer escalations, 0 harmful actions, 38 API calls, 0% unanswered, produced by the `--json` flags that
       already exist: `evidence/ablation.json`, `evidence/baseline.json`,
       `evidence/verify.json`. Committed, stamped with seed and date, served by
       `/api/evidence/{name}`. This also closes the Day 4 carry-over about proof on

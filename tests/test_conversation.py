@@ -10,9 +10,11 @@ from datetime import timedelta
 
 import pytest
 
-from reclaim import clock, promises
-from reclaim.brain.conversation import EFFECTS, apply_reading, process_replies
-from reclaim.brain.conversation.intent import (
+from reclaim import clock
+
+from reclaim.measure import promises
+from reclaim.diagnose.conversation import EFFECTS, apply_reading, process_replies
+from reclaim.diagnose.conversation.intent import (
     INTENT_TOOL, IntentExtractor, _validate, keyword_reading,
 )
 from reclaim.db import (

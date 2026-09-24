@@ -16,26 +16,27 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from . import audit
-from .brain import gate
-from .brain.diagnosis.engine import diagnose_batch
-from .brain.policy import decide
-from .brain.policy.engine import prefill_method, tone_for
-from . import clock, human_queue
-from .config import settings
-from .db import AtRiskRecordRow, HumanQueueRow, SessionLocal, init_db
-from .enums import ActionType, RecordState, RootCause, Stage
-from .executor.actions import execute, executed_keys
-from .executor.channels import ChannelSender
-from .executor.razorpay_client import RazorpayClient
-from .repository import (
+from reclaim import audit
+from reclaim.guardrails import gate
+from reclaim.diagnose.engine import diagnose_batch
+from reclaim.decide import decide
+from reclaim.decide.engine import prefill_method, tone_for
+from reclaim import clock
+from reclaim.decide import human_queue
+from reclaim.config import settings
+from reclaim.db import AtRiskRecordRow, HumanQueueRow, SessionLocal, init_db
+from reclaim.enums import ActionType, RecordState, RootCause, Stage
+from reclaim.execute.actions import execute, executed_keys
+from reclaim.execute.channels import ChannelSender
+from reclaim.execute.razorpay_client import RazorpayClient
+from reclaim.repository import (
     last_attempt_at, load_records, save_batch, set_next_action_at,
 )
-from .settlement import (
+from reclaim.measure.settlement import (
     SettlementResult, settle as settle_batch, settle_promises,
 )
-from .clock import now
-from .synthetic import generate
+from reclaim.clock import now
+from reclaim.synthetic import generate
 
 log = logging.getLogger(__name__)
 
@@ -305,7 +306,7 @@ def run_batch(
         # next tick, because a promise made now must be standing before the
         # ladder next looks at the record.
         if result.settlement.replies:
-            from .brain.conversation import process_replies
+            from reclaim.diagnose.conversation import process_replies
 
             reply_result = process_replies(
                 result.settlement.replies, {r.id: r for r in records},
@@ -325,7 +326,7 @@ def resolve_promises(*, at: datetime | None = None) -> tuple[list[str], list[str
     and one that recorded neither would make "the agent went quiet for a week"
     indistinguishable from "the agent forgot".
     """
-    from .promises import settle_due
+    from reclaim.measure.promises import settle_due
 
     kept, broken = settle_due(at)
     for record_id in kept:
@@ -341,7 +342,7 @@ def resolve_promises(*, at: datetime | None = None) -> tuple[list[str], list[str
 
 
 def _broken_promise_diagnosis(record_id: str):
-    from .models import Diagnosis
+    from reclaim.models import Diagnosis
 
     return Diagnosis(
         root_cause=RootCause.PAYMENT_STALLED,

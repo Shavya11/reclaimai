@@ -10,10 +10,10 @@ from sqlalchemy import delete
 
 from reclaim.db import ExecutedActionRow, InterventionRow, SessionLocal, init_db
 from reclaim.enums import ActionType, Channel, RootCause
-from reclaim.executor.actions import AlreadyExecuted, claim, execute, executed_keys
-from reclaim.executor.channels import ChannelSender, recipient_for
-from reclaim.executor.messages import MAX_LENGTH, fits, render
-from reclaim.executor.razorpay_client import RazorpayClient, RazorpayError
+from reclaim.execute.actions import AlreadyExecuted, claim, execute, executed_keys
+from reclaim.execute.channels import ChannelSender, recipient_for
+from reclaim.execute.messages import MAX_LENGTH, fits, render
+from reclaim.execute.razorpay_client import RazorpayClient, RazorpayError
 from reclaim.models import ProposedAction
 from reclaim.timeutil import now
 
@@ -195,7 +195,7 @@ def test_dry_run_makes_no_live_call():
 def test_every_message_tells_the_customer_how_to_opt_out():
     """Guardrail 2 honours STOP. That is only consent handling if the customer
     was told STOP exists - every template and the fallback must carry it."""
-    from reclaim.executor.messages import OPT_OUT, TEMPLATES
+    from reclaim.execute.messages import OPT_OUT, TEMPLATES
 
     for (cause, tone) in TEMPLATES:
         text = render(cause, amount=50_000, link="https://rzp.io/i/x", tone=tone)
@@ -205,7 +205,7 @@ def test_every_message_tells_the_customer_how_to_opt_out():
 
 
 def test_every_sms_template_still_fits_with_the_opt_out_appended():
-    from reclaim.executor.messages import TEMPLATES
+    from reclaim.execute.messages import TEMPLATES
 
     for (cause, tone) in TEMPLATES:
         # the longest realistic substitution: a lakh-scale amount and a real link

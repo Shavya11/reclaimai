@@ -17,8 +17,8 @@ The fixture it writes is what error_codes.py should be re-pointed at.
 import json
 from pathlib import Path
 
-from .config import ROOT
-from .executor import RazorpayClient
+from reclaim.config import ROOT
+from reclaim.execute import RazorpayClient
 
 FIXTURE = ROOT / "fixtures" / "razorpay_error_codes.json"
 

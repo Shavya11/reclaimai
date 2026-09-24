@@ -14,8 +14,8 @@ hold, and each one below is a way it could silently not:
 None of this spends a token. The properties are ours, not the vendor's.
 """
 
-from reclaim.brain.diagnosis.engine import diagnose_batch
-from reclaim.brain.diagnosis.llm_diagnoser import (
+from reclaim.diagnose.engine import diagnose_batch
+from reclaim.diagnose.llm_diagnoser import (
     BATCH_SIZE, DIAGNOSIS_TOOL, CachedDiagnoser, _validate, batch_tool,
     batch_tool_for, tool_for, unpack_batch,
 )
@@ -280,7 +280,7 @@ def test_chunks_go_out_concurrently_up_to_the_cap():
     is a ceiling, not a target - but the ceiling has to be real."""
     import threading
 
-    from reclaim.brain.diagnosis.llm_diagnoser import MAX_CONCURRENCY
+    from reclaim.diagnose.llm_diagnoser import MAX_CONCURRENCY
 
     started = threading.Barrier(3, timeout=5)
 
@@ -314,7 +314,7 @@ def test_the_ablation_stays_on_the_per_record_path():
     38 layer-2 API calls, measured record by record. The ablation's wrapper does
     not forward `many`, so batching cannot move that number behind their backs -
     and this is the test that says so out loud rather than leaving it to luck."""
-    from reclaim.experiments.ablation import _CountingDiagnoser
+    from reclaim.measure.ablation import _CountingDiagnoser
 
     counted = _CountingDiagnoser(Recorder(batch=lambda c: [_diagnosis() for _ in c]))
     assert not hasattr(counted, "many"), (

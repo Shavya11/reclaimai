@@ -13,10 +13,10 @@ from datetime import datetime, timedelta
 import pytest
 from hypothesis import HealthCheck, given, settings as hyp_settings, strategies as st
 
-from reclaim.brain.guardrails import GUARDRAIL_NAMES, REGISTRY, GuardrailContext, evaluate_all
+from reclaim.guardrails import GUARDRAIL_NAMES, REGISTRY, GuardrailContext, evaluate_all
 from reclaim.enums import ActionType, Channel, RecordState
 from reclaim.models import ProposedAction
-from reclaim.brain.rules import threshold
+from reclaim.rules import threshold
 from reclaim.timeutil import IST
 
 NOON = datetime(2026, 8, 24, 12, 0, tzinfo=IST)
@@ -94,7 +94,7 @@ def test_high_value_requires_human():
 def test_risk_decline_never_produces_an_action():
     """Policy-level, not guardrail-level: the table refuses before the gate is
     even asked."""
-    from reclaim.brain.policy import decide
+    from reclaim.decide import decide
     from reclaim.enums import LeakType, RootCause
     from reclaim.models import AtRiskRecord, Diagnosis
 
@@ -149,7 +149,7 @@ def test_every_guardrail_file_is_registered():
     adding a rule and forgetting to register it fails here."""
     from pathlib import Path
 
-    rules_dir = Path(__file__).resolve().parent.parent / "reclaim" / "brain"         / "guardrails" / "rules"
+    rules_dir = Path(__file__).resolve().parent.parent / "reclaim" / "guardrails" / "rules"
     files = {p.stem for p in rules_dir.glob("*.py") if p.stem != "__init__"}
 
     assert files == set(GUARDRAIL_NAMES)
@@ -385,7 +385,7 @@ def test_daily_budget_is_per_day_not_per_batch():
     executed today."""
     from reclaim.repository import actions_today
     from reclaim.timeutil import now
-    from reclaim.brain.gate import run as gate_run
+    from reclaim.guardrails.gate import run as gate_run
 
     seeded = actions_today(now())
     assert isinstance(seeded, int) and seeded >= 0
@@ -403,7 +403,7 @@ def test_daily_budget_is_per_day_not_per_batch():
                             channel=None, scheduled_for=NOON, attempt_number=1,
                             policy_ref="FAILED_PAYMENT.INSUFFICIENT_FUNDS",
                             rationale="t", amount=100)
-    from reclaim.brain.guardrails.rules import daily_budget as rule_module
+    from reclaim.guardrails.rules import daily_budget as rule_module
 
     original = rule_module.threshold
     try:
@@ -423,15 +423,14 @@ def test_frequency_cap_counts_over_the_window_it_claims():
     """The deferral read `window_days` from config; the count did not. Editing
     the window in the rules studio changed one and not the other."""
     import inspect
-    from reclaim.brain import gate
-
+    from reclaim.guardrails import gate
     src = inspect.getsource(gate.run)
     assert "contact_history(frm, window_days=window)" in src
     assert 'threshold("frequency_cap", "window_days"' in src
 
 
 def test_max_attempts_comes_from_the_policy_row_not_a_literal():
-    from reclaim.brain.gate import _policy_max_attempts
+    from reclaim.guardrails.gate import _policy_max_attempts
 
     rows = {("FAILED_PAYMENT", "INSUFFICIENT_FUNDS"): {"max_attempts": 2},
             ("FAILED_PAYMENT", "BANK_DOWNTIME"): {"max_attempts": 3}}

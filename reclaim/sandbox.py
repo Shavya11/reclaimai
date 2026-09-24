@@ -40,10 +40,10 @@ from typing import Any
 
 from pydantic import Field
 
-from .clock import now
-from .enums import LeakType, RecordState
-from .models import AtRiskRecord, _Base
-from .provenance import mark, next_user_id
+from reclaim.clock import now
+from reclaim.enums import LeakType, RecordState
+from reclaim.models import AtRiskRecord, _Base
+from reclaim.provenance import mark, next_user_id
 
 log = logging.getLogger(__name__)
 
@@ -165,8 +165,8 @@ def build_record(sub: Submission, record_id: str, *,
 def _diagnose(record: AtRiskRecord, *, without_model: bool):
     """Layer 1, then layer 2, then the floor — through the same engine the batch
     uses, so a change to the fallback chain reaches the sandbox for free."""
-    from .brain.diagnosis.deterministic import diagnose as layer1
-    from .brain.diagnosis.engine import diagnose_batch
+    from reclaim.diagnose.deterministic import diagnose as layer1
+    from reclaim.diagnose.engine import diagnose_batch
 
     layer1_hit = layer1(record)
     llm = None if without_model else _shared_llm()
@@ -176,10 +176,10 @@ def _diagnose(record: AtRiskRecord, *, without_model: bool):
 
 def _evaluate(record: AtRiskRecord, sub: Submission) -> tuple[Trace, Any, Any]:
     """The decision path, stopping before anything is executed."""
-    from .brain import gate
-    from .brain.policy import decide
-    from .db import CustomerRow, SessionLocal
-    from .executor.actions import executed_keys
+    from reclaim.guardrails import gate
+    from reclaim.decide import decide
+    from reclaim.db import CustomerRow, SessionLocal
+    from reclaim.execute.actions import executed_keys
 
     frm = now()
     trace = Trace(record_id=record.id)
@@ -269,9 +269,9 @@ def commit(sub: Submission, *, source_ref: str | None = None) -> dict[str, Any]:
     what happened that cannot be recovered from what was written down is a claim
     nobody should believe, including us.
     """
-    from .db import SessionLocal, init_db
-    from .repository import save_records
-    from .runner import run_batch
+    from reclaim.db import SessionLocal, init_db
+    from reclaim.repository import save_records
+    from reclaim.runner import run_batch
 
     init_db()
     with SessionLocal() as session:
@@ -310,7 +310,7 @@ def _shared_llm():
     """
     with _LLM_LOCK:
         if not _LLM:
-            from .api.app import _llm
+            from reclaim.api.app import _llm
 
             _LLM.append(_llm())
         return _LLM[0]
@@ -333,7 +333,7 @@ _DECIDED_BY = {
 def _trace_from_audit(record_id: str) -> Trace:
     from sqlalchemy import asc
 
-    from .db import AuditLogRow, SessionLocal
+    from reclaim.db import AuditLogRow, SessionLocal
 
     trace = Trace(record_id=record_id)
     with SessionLocal() as session:
@@ -420,9 +420,9 @@ def _settle_one(record_id: str) -> None:
     Without an outcome the record can never resolve and sits in the human queue
     for ever, which is the bug 6.1 already fixed once for a different reason.
     """
-    from .config import settings
-    from .enums import RootCause
-    from .settlement import settle
+    from reclaim.config import settings
+    from reclaim.enums import RootCause
+    from reclaim.measure.settlement import settle
 
     cause = _diagnosed_cause(record_id)
     try:
@@ -435,8 +435,8 @@ def _settle_one(record_id: str) -> None:
 def _diagnosed_cause(record_id: str):
     from sqlalchemy import desc
 
-    from .db import AuditLogRow, SessionLocal
-    from .enums import RootCause, Stage
+    from reclaim.db import AuditLogRow, SessionLocal
+    from reclaim.enums import RootCause, Stage
 
     with SessionLocal() as session:
         row = (session.query(AuditLogRow)
@@ -468,10 +468,10 @@ def read_reply(text: str, *, without_model: bool = False) -> dict[str, Any]:
         model may READ a date, it may not SET one;
       * the effects table, which is data and can be read top to bottom.
     """
-    from .brain.conversation.handler import EFFECTS, _confidence_floor
-    from .brain.conversation.intent import keyword_reading
-    from .enums import ReplyIntent
-    from .promises import validate_date
+    from reclaim.diagnose.conversation.handler import EFFECTS, _confidence_floor
+    from reclaim.diagnose.conversation.intent import keyword_reading
+    from reclaim.enums import ReplyIntent
+    from reclaim.measure.promises import validate_date
 
     frm = now()
     trace = Trace(record_id="—")
@@ -575,14 +575,14 @@ def _build_extractor():
     untruthfully — it is what a reader uses to decide whether the model was
     consulted at all.
     """
-    from .brain.conversation import build_extractor
+    from reclaim.diagnose.conversation import build_extractor
 
     extractor = build_extractor()
     return extractor if getattr(extractor, "available", False) else None
 
 
 def _parse_promise_date(raw: str | None):
-    from .brain.conversation.handler import _parse_date
+    from reclaim.diagnose.conversation.handler import _parse_date
 
     return _parse_date(raw)
 
@@ -652,10 +652,10 @@ def simulate_guardrails(h: Hypothetical) -> dict[str, Any]:
     """
     from datetime import timedelta as _td
 
-    from .brain.guardrails.base import GuardrailContext, evaluate_all
-    from .brain.guardrails.registry import REGISTRY
-    from .enums import ActionType, Channel
-    from .models import ProposedAction
+    from reclaim.guardrails.base import GuardrailContext, evaluate_all
+    from reclaim.guardrails.registry import REGISTRY
+    from reclaim.enums import ActionType, Channel
+    from reclaim.models import ProposedAction
 
     at = now().replace(hour=h.hour_ist, minute=0, second=0, microsecond=0)
     try:
@@ -776,7 +776,7 @@ class CheckoutRefused(ValueError):
 
 
 def checkout_config() -> dict[str, Any]:
-    from .config import settings
+    from reclaim.config import settings
 
     available = settings.has_razorpay
     # The key id is public by design — Checkout cannot open without it. The
@@ -794,8 +794,8 @@ def open_order(amount_paise: int) -> dict[str, Any]:
     """
     import uuid
 
-    from .config import settings
-    from .executor.razorpay_client import RazorpayClient
+    from reclaim.config import settings
+    from reclaim.execute.razorpay_client import RazorpayClient
 
     receipt = f"{SANDBOX_RECEIPT_PREFIX}{uuid.uuid4().hex[:24]}"
     order = RazorpayClient(dry_run=False).create_order(
@@ -807,8 +807,8 @@ def open_order(amount_paise: int) -> dict[str, Any]:
 
 
 def commit_failed_payment(failure: CheckoutFailure) -> dict[str, Any]:
-    from .db import AtRiskRecordRow, SessionLocal, init_db
-    from .executor.razorpay_client import RazorpayClient
+    from reclaim.db import AtRiskRecordRow, SessionLocal, init_db
+    from reclaim.execute.razorpay_client import RazorpayClient
 
     client = RazorpayClient(dry_run=False)
     payment = client.fetch_payment(failure.payment_id)

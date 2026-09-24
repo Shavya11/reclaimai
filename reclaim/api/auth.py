@@ -18,7 +18,7 @@ in a public static site.
 
 from fastapi import HTTPException, Request
 
-from ..config import settings
+from reclaim.config import settings
 
 HEADER = "X-Admin-Token"
 _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})

@@ -10,7 +10,7 @@ entry silently skews the batch numbers.
 
 import random
 
-from ..enums import ActionType, RootCause
+from reclaim.enums import ActionType, RootCause
 
 # P(recovered) given the intervention actually fired.
 BASE_SUCCESS: dict[RootCause, float] = {

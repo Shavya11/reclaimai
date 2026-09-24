@@ -12,8 +12,8 @@ These tests stand in a fake SDK and look at the payload.
 
 import pytest
 
-from reclaim.executor import razorpay_client as rc
-from reclaim.executor.razorpay_client import RazorpayClient, RazorpayError
+from reclaim.execute import razorpay_client as rc
+from reclaim.execute.razorpay_client import RazorpayClient, RazorpayError
 
 
 class _Endpoint:

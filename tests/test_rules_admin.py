@@ -8,9 +8,13 @@ cannot alter them.
 
 import pytest
 
-from reclaim import admin, clock, whatif
-from reclaim.brain import rules
-from reclaim.brain.validation import (
+from reclaim.rules import admin
+
+from reclaim import clock
+
+from reclaim.measure import whatif
+from reclaim import rules
+from reclaim.rules.validation import (
     RuleInvalid, validate_guardrail_config, validate_policy_row,
 )
 from reclaim.db import (

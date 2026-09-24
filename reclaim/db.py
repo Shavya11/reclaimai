@@ -26,8 +26,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
-from .config import settings
-from .timeutil import now
+from reclaim.config import settings
+from reclaim.timeutil import now
 
 
 class Base(DeclarativeBase):
@@ -389,11 +389,11 @@ def use_database(url: str):
 # which is exactly the failure the replay must never have.
 _REBIND_TARGETS = (
     "reclaim.repository", "reclaim.audit.log", "reclaim.clock",
-    "reclaim.promises", "reclaim.runner", "reclaim.scoreboard",
-    "reclaim.settlement", "reclaim.baseline", "reclaim.admin",
-    "reclaim.executor.actions", "reclaim.webhooks.attribution",
-    "reclaim.brain.gate", "reclaim.brain.rules",
-    "reclaim.brain.conversation.handler",
+    "reclaim.measure.promises", "reclaim.runner", "reclaim.measure.scoreboard",
+    "reclaim.measure.settlement", "reclaim.measure.baseline", "reclaim.rules.admin",
+    "reclaim.execute.actions", "reclaim.measure.webhooks.attribution",
+    "reclaim.guardrails.gate", "reclaim.rules",
+    "reclaim.diagnose.conversation.handler",
 )
 
 

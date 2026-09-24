@@ -7,12 +7,12 @@ during a bank outage and SMS-blasting fifteen people who were never short.
 
 import pytest
 
-from reclaim.brain.diagnosis.accuracy import cohort_counterfactual, score
-from reclaim.brain.diagnosis.cohort import OUTAGE_RATIO, compute as compute_cohort
-from reclaim.brain.diagnosis.deterministic import (
+from reclaim.diagnose.accuracy import cohort_counterfactual, score
+from reclaim.diagnose.cohort import OUTAGE_RATIO, compute as compute_cohort
+from reclaim.diagnose.deterministic import (
     AMBIGUOUS_REASONS, DETERMINISTIC_MAP, coverage, diagnose,
 )
-from reclaim.brain.diagnosis.engine import diagnose_batch, diagnose_one
+from reclaim.diagnose.engine import diagnose_batch, diagnose_one
 from reclaim.enums import LeakType, RootCause
 from reclaim.models import AtRiskRecord, Diagnosis
 from reclaim.synthetic import generate
@@ -140,7 +140,7 @@ def test_cohort_overrides_a_generic_decline(batch):
 
 def test_cohort_does_not_override_a_named_error():
     """An expired card is expired even during an outage."""
-    from reclaim.brain.diagnosis.cohort import CohortSignal
+    from reclaim.diagnose.cohort import CohortSignal
 
     outage = CohortSignal(issuer="HDFC", bucket="HDFC|x", failures=40,
                           attempts=50, failure_rate=0.8, baseline_rate=0.04)

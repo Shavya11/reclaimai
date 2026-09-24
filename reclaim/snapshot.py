@@ -29,9 +29,9 @@ from typing import Any
 
 from sqlalchemy import inspect as sa_inspect
 
-from .config import ROOT, settings
-from .money import format_inr
-from .db import (
+from reclaim.config import ROOT, settings
+from reclaim.money import format_inr
+from reclaim.db import (
     AppStateRow,
     AtRiskRecordRow,
     AuditLogRow,
@@ -45,7 +45,7 @@ from .db import (
     init_db,
     reset_database,
 )
-from .timeutil import now as wall_now, to_ist
+from reclaim.timeutil import now as wall_now, to_ist
 
 log = logging.getLogger(__name__)
 
@@ -118,9 +118,9 @@ def build(*, llm=None, extractor=None, seed: int | None = None,
     deployment shows an empty promise book beside a scoreboard that says there
     should be nine.
     """
-    from . import clock
-    from .runner import DEMO_ARC, run_batch, tick
-    from .scoreboard import compute
+    from reclaim import clock
+    from reclaim.runner import DEMO_ARC, run_batch, tick
+    from reclaim.measure.scoreboard import compute
 
     path = path or PATH
     seed = seed if seed is not None else settings.seed

@@ -11,12 +11,14 @@ from datetime import timedelta
 
 import pytest
 
-from reclaim import clock, human_queue
+from reclaim import clock
+
+from reclaim.decide import human_queue
 from reclaim.db import (
     AtRiskRecordRow, HumanQueueRow, SessionLocal, reset_database,
 )
 from reclaim.enums import LeakType, RecordState, RootCause
-from reclaim.human_queue import Tier
+from reclaim.decide.human_queue import Tier
 
 
 @pytest.fixture(autouse=True)
@@ -231,7 +233,7 @@ def test_a_record_escalated_then_paid_leaves_the_queue():
     from reclaim.db import InterventionRow
     from reclaim.runner import run_batch
     from reclaim.synthetic import razorpay_payloads as payloads
-    from reclaim.webhooks.attribution import PROCESSED, handle
+    from reclaim.measure.webhooks.attribution import PROCESSED, handle
 
     run_batch(dry_run=True, settle=False)
     with SessionLocal() as session:
@@ -275,7 +277,7 @@ def test_a_reply_arriving_after_the_money_does_not_queue_anyone():
     normal order, not a race. Reading the reply is still right; putting a
     settled record on somebody's desk is not.
     """
-    from reclaim.brain.conversation.handler import _to_human
+    from reclaim.diagnose.conversation.handler import _to_human
     from reclaim.repository import load_records
 
     _record("R1", amount=10_000_00, state=RecordState.RECOVERED)

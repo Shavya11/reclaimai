@@ -6,7 +6,7 @@ from collections import Counter
 
 import pytest
 
-from reclaim.brain.diagnosis.deterministic import AMBIGUOUS_REASONS
+from reclaim.diagnose.deterministic import AMBIGUOUS_REASONS
 from reclaim.enums import LeakType, RootCause
 from reclaim.synthetic import BASE_SUCCESS, generate, probability
 from reclaim.enums import ActionType

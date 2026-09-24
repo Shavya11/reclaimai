@@ -15,9 +15,9 @@ Nothing outside a demo needs this. `reset()` puts the clock back on the wall.
 
 from datetime import datetime, timedelta
 
-from .brain.policy.schedule import resolve
-from .db import AppStateRow, SessionLocal, init_db
-from .timeutil import now as wall_now, to_ist
+from reclaim.decide.schedule import resolve
+from reclaim.db import AppStateRow, SessionLocal, init_db
+from reclaim.timeutil import now as wall_now, to_ist
 
 OFFSET_KEY = "clock_offset_seconds"
 

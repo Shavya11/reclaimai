@@ -27,8 +27,8 @@ from reclaim.db import (
 from reclaim.enums import RecordState, Stage
 from reclaim.runner import run_batch
 from reclaim.synthetic import razorpay_payloads as payloads
-from reclaim.webhooks import parse, receive, sign, verify
-from reclaim.webhooks.attribution import (
+from reclaim.measure.webhooks import parse, receive, sign, verify
+from reclaim.measure.webhooks.attribution import (
     ALREADY_ATTRIBUTED,
     DUPLICATE,
     IGNORED,
@@ -441,7 +441,7 @@ def test_the_batch_recovers_money_only_through_verified_webhooks():
     """The whole chain, in one assertion: a batch runs, outcomes come back as
     signed deliveries, and every recovered rupee on the scoreboard traces to an
     attributed webhook."""
-    from reclaim.scoreboard import compute
+    from reclaim.measure.scoreboard import compute
 
     result = run_batch(dry_run=True)
     assert result.settlement is not None

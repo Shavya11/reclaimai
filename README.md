@@ -17,21 +17,21 @@ number it produced on `seed 42`. Nothing here is a figure typed into a document.
 
 | Claim | Code | Test | Measured |
 |---|---|---|---|
-| **Razorpay delivered, and we verified it** | [webhooks/attribution.py](reclaim/webhooks/attribution.py) | [tests/test_webhooks.py](tests/test_webhooks.py), evidence in [evidence/webhook.json](evidence/webhook.json) | 5 events, all `simulated: false`, walked to `REC_5085` |
-| A customer never gets a third message in 7 days | [rules/frequency_cap.py](reclaim/brain/guardrails/rules/frequency_cap.py) | `test_invariant_no_customer_exceeds_two_contacts_in_seven_days` | 70 refusals |
-| No action tuple ever executes twice | [rules/idempotency.py](reclaim/brain/guardrails/rules/idempotency.py) | `test_invariant_no_action_tuple_ever_executes_twice` | 192 executions, 192 distinct keys |
-| An opted-out customer is never contacted | [rules/consent.py](reclaim/brain/guardrails/rules/consent.py) | `test_opted_out_customer_never_contacted` | 15 refusals, 0 contacts |
-| Silent retries are exempt at 3am; SMS is not | [rules/quiet_hours.py](reclaim/brain/guardrails/rules/quiet_hours.py) | `test_silent_retry_allowed_at_3am_but_sms_is_not` | 23 silent retries |
-| A flagged card is never retried | [policies.yaml](reclaim/brain/policy/policies.yaml) | `test_risk_decline_never_produces_an_action` | 0 retries |
-| A guardrail never raises, even on junk | [guardrails/base.py](reclaim/brain/guardrails/base.py) | `test_guardrails_never_raise` | 500 malformed inputs, all blocked |
-| The batch completes with the model down | [diagnosis/engine.py](reclaim/brain/diagnosis/engine.py) | `test_batch_completes_when_the_api_is_down` | 180/180 records |
-| A forged webhook is rejected | [webhooks/signature.py](reclaim/webhooks/signature.py) | `test_a_tampered_body_fails_verification` | raw-byte HMAC |
-| Every recovered rupee traces to an intervention | [webhooks/attribution.py](reclaim/webhooks/attribution.py) | `test_recovered_money_equals_what_was_attributed` | ₹27,44,651 across 69 records |
-| No contact lands inside a promise window | [rules/promise_window.py](reclaim/brain/guardrails/rules/promise_window.py) | `test_invariant_no_contact_lands_inside_a_promise_window` | 2 refusals |
-| A settled record leaves the human queue | [human_queue.py](reclaim/human_queue.py) | `test_a_record_escalated_then_paid_leaves_the_queue` | 51 raised, 1 self-resolved |
-| The what-if replay writes nothing | [whatif.py](reclaim/whatif.py) | `test_a_replay_changes_nothing_in_the_live_database` | 3,848 rows unchanged |
-| Layer 2 earns its calls | [experiments/ablation.py](reclaim/experiments/ablation.py) | `tests/test_ablation.py`, evidence in [evidence/ablation.json](evidence/ablation.json) | +₹6,07,926 net, 38 fewer escalations |
-| An unprompted payment is never claimed as ours | [webhooks/attribution.py](reclaim/webhooks/attribution.py) | `test_an_unprompted_payment_is_not_credited_to_an_intervention` | logged `ORGANIC`, ₹0 credited |
+| **Razorpay delivered, and we verified it** | [webhooks/attribution.py](reclaim/measure/webhooks/attribution.py) | [tests/test_webhooks.py](tests/test_webhooks.py), evidence in [evidence/webhook.json](evidence/webhook.json) | 5 events, all `simulated: false`, walked to `REC_5085` |
+| A customer never gets a third message in 7 days | [rules/frequency_cap.py](reclaim/guardrails/rules/frequency_cap.py) | `test_invariant_no_customer_exceeds_two_contacts_in_seven_days` | 70 refusals |
+| No action tuple ever executes twice | [rules/idempotency.py](reclaim/guardrails/rules/idempotency.py) | `test_invariant_no_action_tuple_ever_executes_twice` | 192 executions, 192 distinct keys |
+| An opted-out customer is never contacted | [rules/consent.py](reclaim/guardrails/rules/consent.py) | `test_opted_out_customer_never_contacted` | 15 refusals, 0 contacts |
+| Silent retries are exempt at 3am; SMS is not | [rules/quiet_hours.py](reclaim/guardrails/rules/quiet_hours.py) | `test_silent_retry_allowed_at_3am_but_sms_is_not` | 23 silent retries |
+| A flagged card is never retried | [policies.yaml](reclaim/decide/policies.yaml) | `test_risk_decline_never_produces_an_action` | 0 retries |
+| A guardrail never raises, even on junk | [guardrails/base.py](reclaim/guardrails/base.py) | `test_guardrails_never_raise` | 500 malformed inputs, all blocked |
+| The batch completes with the model down | [diagnosis/engine.py](reclaim/diagnose/engine.py) | `test_batch_completes_when_the_api_is_down` | 180/180 records |
+| A forged webhook is rejected | [webhooks/signature.py](reclaim/measure/webhooks/signature.py) | `test_a_tampered_body_fails_verification` | raw-byte HMAC |
+| Every recovered rupee traces to an intervention | [webhooks/attribution.py](reclaim/measure/webhooks/attribution.py) | `test_recovered_money_equals_what_was_attributed` | ₹27,44,651 across 69 records |
+| No contact lands inside a promise window | [rules/promise_window.py](reclaim/guardrails/rules/promise_window.py) | `test_invariant_no_contact_lands_inside_a_promise_window` | 2 refusals |
+| A settled record leaves the human queue | [human_queue.py](reclaim/decide/human_queue.py) | `test_a_record_escalated_then_paid_leaves_the_queue` | 51 raised, 1 self-resolved |
+| The what-if replay writes nothing | [whatif.py](reclaim/measure/whatif.py) | `test_a_replay_changes_nothing_in_the_live_database` | 3,848 rows unchanged |
+| Layer 2 earns its calls | [experiments/ablation.py](reclaim/measure/ablation.py) | `tests/test_ablation.py`, evidence in [evidence/ablation.json](evidence/ablation.json) | +₹6,07,926 net, 38 fewer escalations |
+| An unprompted payment is never claimed as ours | [webhooks/attribution.py](reclaim/measure/webhooks/attribution.py) | `test_an_unprompted_payment_is_not_credited_to_an_intervention` | logged `ORGANIC`, ₹0 credited |
 
 `cli verify` runs 30 structural checks on every run, and `pytest` runs 446
 tests. Both are one command, below.
@@ -477,7 +477,7 @@ proof on an ephemeral disk has an expiry date, proof in git does not.
 **What is modelled is the batch.** That delivery landed on the deployed
 instance, against a record the shipped snapshot had already settled — so the
 scoreboard you run locally is built from 74 locally signed events, not from it.
-[reclaim/settlement.py](reclaim/settlement.py) signs Razorpay-shaped payloads and
+[reclaim/measure/settlement.py](reclaim/measure/settlement.py) signs Razorpay-shaped payloads and
 posts them through the same `receive()` a real delivery hits — nothing bypasses
 the signature check or the attribution walk. The outcome simulator decides only
 *whether the customer paid*. Everything it produces is stored `simulated: true`,
@@ -523,27 +523,49 @@ tick. `cli demo` walks the whole ladder in 24 seconds.
 
 ## Layout
 
+`reclaim/` is laid out as the pipeline runs. `runner.py` walks the six stages in
+order, and every stage writes to the audit log, including the stages that refuse.
+
 ```
 reclaim/
-  enums.py          closed enums — RootCause is why hallucination is harmless
-  models.py         Pydantic boundary models; AtRiskRecord stays V2-generic
-  db.py             eight tables + the two database-level guarantees
-  clock.py          the demo clock — persisted, so ticks survive a restart
-  timeutil.py       IST, quiet hours, next_salary_window
-  money.py          paise -> ₹5,84,300 / ₹5.84L
-  verify.py         structural self-audit
-  detectors/        one plugin per leak type -> detect() -> list[AtRiskRecord]
-  synthetic/        seeded leak generator, outcome simulator, Razorpay payloads
-  brain/            diagnosis / policy / guardrails
-  executor/         Razorpay wrapper: idempotency, backoff, DRY_RUN
-  webhooks/         signature (raw bytes) + events + outcome attribution
-  settlement.py     replays modelled outcomes through the real webhook path
-  scoreboard.py     the §9 scoreboard, recomputed from storage every time
-  baseline.py       the naive strategy, and where it beats us
+  detect/        1  one plugin per leak type -> detect() -> list[AtRiskRecord]
+  diagnose/      2  layer 1 lookup, layer 2 model, cohort signals; conversation/ reads replies
+  decide/        3  policies.yaml + engine: a label becomes a proposed action; human_queue
+  guardrails/    4  fourteen rules, one file each, and the gate that runs them over a batch
+  execute/       5  Razorpay wrapper: idempotency keys, backoff, DRY_RUN, channels
+  measure/       6  webhooks (raw-byte HMAC + attribution), scoreboard, settlement,
+                    baseline, what-if, promises, trace, evidence, ablation
+  rules/            THE single rule loader: database first, YAML fallback; validation, admin
   audit/            append-only decision log
   api/              FastAPI: /api/* for the UI, /webhooks/razorpay for Razorpay
+  synthetic/        seeded leak generator, outcome simulator, Razorpay payloads
+  runner.py         the batch orchestrator — detect -> ... -> measure
+  enums.py          closed enums — RootCause is why hallucination is harmless
+  models.py         Pydantic boundary models; AtRiskRecord stays V2-generic
+  db.py             the tables + the two database-level guarantees
+  clock.py          the demo clock — persisted, so ticks survive a restart
+  verify.py         structural self-audit
 ui/                 Next.js dashboard, static-exported and served by FastAPI
+tests/              455 tests, including the guardrail property invariants
+evidence/           committed proof: baseline, ablation, verify, a real webhook delivery
+extras/             demo-video scripts, screenshots, handoff notes — not part of the app
 ```
+
+The stages are not split by flow or by version, on purpose: the whole claim is
+that a failed payment and an overdue invoice go through **the same engine**. Where
+each flow and each version actually lives:
+
+| Stage | Failed payments, carts, mandates (V1) | Invoices + promise-to-pay (V2) |
+|---|---|---|
+| Detect | `failed_payments.py`, `abandoned_carts.py`, `failed_mandates.py` | `overdue_invoices.py` |
+| Diagnose | `deterministic.py`, `llm_diagnoser.py`, `gemini_diagnoser.py`, `cohort.py` | `receivables.py`, `conversation/` (reads replies, spots promises) |
+| Decide | `policies.yaml` rows per cause | the same file, plus the `ladder:` dunning field |
+| Guardrails | thirteen rules in `rules/` | `promise_window.py` — a promise is a guardrail, not a branch |
+| Execute | payment links, retries, messages | the same actions, on a dunning schedule |
+| Measure | `scoreboard.py`, `baseline.py`, `settlement.py`, `webhooks/` | `promises.py` (kept / broken), DSO on the scoreboard, `whatif.py` |
+
+V2 also made the rules editable: `rules/` reads the database before the YAML,
+and `rules/validation.py` refuses a bad edit whole.
 
 **[DEMO.md](DEMO.md)** is the five-minute script, with measured command timings.
 

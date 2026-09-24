@@ -9,13 +9,13 @@ thing that can test that claim, and it either drops in or it does not.
 
 import pytest
 
-from reclaim.brain import rules
-from reclaim.brain.diagnosis.deterministic import diagnose
-from reclaim.brain.diagnosis.receivables import CLEAR_MARGIN_DAYS
-from reclaim.brain.guardrails.rules.value_ceiling import ceiling_for
-from reclaim.brain.policy import decide
-from reclaim.brain.policy.engine import ladder_step, tone_for
-from reclaim.detectors import REGISTRY
+from reclaim import rules
+from reclaim.diagnose.deterministic import diagnose
+from reclaim.diagnose.receivables import CLEAR_MARGIN_DAYS
+from reclaim.guardrails.rules.value_ceiling import ceiling_for
+from reclaim.decide import decide
+from reclaim.decide.engine import ladder_step, tone_for
+from reclaim.detect import REGISTRY
 from reclaim.enums import (
     ActionType, CAUSES_FOR_LEAK, LeakType, RootCause,
 )

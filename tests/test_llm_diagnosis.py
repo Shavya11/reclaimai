@@ -8,9 +8,9 @@ a token.
 
 import pytest
 
-from reclaim.brain.diagnosis.cohort import CohortSignal
-from reclaim.brain.diagnosis.engine import diagnose_batch, diagnose_one
-from reclaim.brain.diagnosis.llm_diagnoser import (
+from reclaim.diagnose.cohort import CohortSignal
+from reclaim.diagnose.engine import diagnose_batch, diagnose_one
+from reclaim.diagnose.llm_diagnoser import (
     DIAGNOSIS_TOOL,
     SYSTEM_PROMPT,
     LLMDiagnoser,

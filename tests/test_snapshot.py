@@ -15,7 +15,7 @@ import pytest
 from reclaim import snapshot
 from reclaim.db import reset_database
 from reclaim.repository import count_records
-from reclaim.scoreboard import compute
+from reclaim.measure.scoreboard import compute
 from reclaim.timeutil import now as wall_now
 
 
