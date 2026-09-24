@@ -32,7 +32,6 @@ import {
 import { Badge, Button, Card, Empty, Skeleton } from "@/components/ui";
 import {
   IconAlert,
-  IconAudit,
   IconClock,
   IconDashboard,
   IconHuman,
@@ -245,7 +244,6 @@ export default function Page() {
     ["human", "Human queue", IconHuman, queue.length || null],
     ["rules", "Rules studio", IconRules, null],
     ["evidence", "Evidence", IconShield, null],
-    ["audit", "Audit trail", IconAudit, null],
   ];
 
   return (
