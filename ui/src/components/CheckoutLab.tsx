@@ -172,10 +172,11 @@ export function CheckoutLab({ onCommitted }: { onCommitted?: () => void }) {
               <ol className="mt-4 list-decimal space-y-1.5 pl-5 text-[12px] leading-relaxed text-muted">
                 <li>Open Checkout. A real test order is created on Razorpay first.</li>
                 <li>
-                  Pay any test way: <strong className="text-ink">Netbanking</strong>{" "}
-                  with any bank, or card{" "}
-                  <span className="num text-ink">5267 3181 8797 5449</span> with any
-                  future expiry and CVV.
+                  Easiest: <strong className="text-ink">Netbanking</strong>, any
+                  bank. Or card{" "}
+                  <span className="num text-ink">5267 3181 8797 5449</span>, expiry{" "}
+                  <span className="num text-ink">12/30</span> (any future date), CVV{" "}
+                  <span className="num text-ink">123</span>.
                 </li>
                 <li>
                   On the test bank page, press <strong className="text-ink">Failure</strong>.
