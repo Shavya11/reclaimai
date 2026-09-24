@@ -467,7 +467,11 @@ export const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 // Admin writes carry a body, unlike every V1 write which was a bare POST with
 // query parameters. Kept separate rather than widening `post`, so the existing
 // call sites keep their exact signature.
-export async function postJSON<T>(path: string, body: unknown): Promise<T> {
+export async function postJSON<T>(
+  path: string,
+  body: unknown,
+  timeout: number = READ_TIMEOUT_MS,
+): Promise<T> {
   return request<T>(
     path,
     {
@@ -477,10 +481,19 @@ export async function postJSON<T>(path: string, body: unknown): Promise<T> {
     },
     // A replay walks two full arcs. It is the one write in the system that
     // does its work inside the request, because the answer is only useful
-    // immediately and polling for it would be a second mechanism.
-    READ_TIMEOUT_MS,
+    // immediately and polling for it would be a second mechanism. The default
+    // budget below assumes that finishes in tens of seconds; a slower host can
+    // pass a longer one explicitly rather than this function guessing for
+    // every caller.
+    timeout,
   );
 }
+
+// A replay is provably slower on some hosts than the tens of seconds it was
+// designed for — real orchestration over two full arcs, on whatever CPU the
+// deployment actually has. Wide enough to cover that without pretending the
+// call can hang forever.
+export const REPLAY_TIMEOUT_MS = 240_000;
 
 // A 422 is the validator refusing a rule. The problems it lists are the whole
 // value of the refusal, so they have to survive as far as the form.

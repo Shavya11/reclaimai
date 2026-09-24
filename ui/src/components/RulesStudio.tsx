@@ -17,11 +17,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  REPLAY_TIMEOUT_MS,
   ReplayDiff,
   RuleChange,
   RulesSnapshot,
   fmtTime,
   get,
+  isBusy,
   post,
   postJSON,
   validationProblems,
@@ -159,11 +161,29 @@ export default function RulesStudio({
     setProblems(null);
     setError(null);
     try {
-      setDiff(await postJSON<ReplayDiff>("/api/admin/replay", { guardrails: overrides }));
+      setDiff(
+        await postJSON<ReplayDiff>(
+          "/api/admin/replay",
+          { guardrails: overrides },
+          REPLAY_TIMEOUT_MS,
+        ),
+      );
     } catch (e) {
       const found = validationProblems(e);
-      if (found) setProblems(found);
-      else setError(String(e));
+      if (found) {
+        setProblems(found);
+      } else if (isBusy(e)) {
+        // A replay walks two full arcs inside the request, and on a slow host
+        // that can outlast an earlier attempt this tab already gave up
+        // waiting on. The server is still working, not broken — say that
+        // instead of surfacing the 409 as if the click failed.
+        setError(
+          "Still replaying from an earlier attempt — this can take a few " +
+            "minutes on a slow host. Wait a moment and press Replay again.",
+        );
+      } else {
+        setError(String(e));
+      }
     } finally {
       setBusy(null);
     }
